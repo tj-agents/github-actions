@@ -31,4 +31,9 @@ not. Check that it landed: ask them to explain it back, or to write the next pie
 
 ## References
 
-_None agreed yet._ Explanations and conventions cite only the references listed here.
+- GitHub Actions documentation, docs.github.com/actions, including its secure-use reference
+- GitHub changelog, github.blog/changelog
+- actionlint, github.com/rhysd/actionlint
+- zizmor, docs.zizmor.sh
+
+Explanations and conventions cite only the references listed here.

@@ -7,6 +7,7 @@
       "domain-design",
       "errors",
       "libraries",
+      "security",
       "structure",
       "style",
       "testing"
@@ -126,6 +127,20 @@
       "profile": "scaffold",
       "applicability": [
         "new GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "security",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
       ],
       "requires": [
         "github-actions"

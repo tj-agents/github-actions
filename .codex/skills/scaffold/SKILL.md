@@ -1,6 +1,6 @@
 ---
 name: scaffold
-description: Create a new GitHub Actions project in the File structure `github-actions:structure` records. Use when starting a GitHub Actions project; it creates nothing until that File structure is agreed.
+description: Deliberately creates nothing — GitHub Actions workflows are written by the scaffold that owns a repository's deploy target, into the File structure `github-actions:structure` records. Use to find which scaffold writes a project's workflows.
 kind: utility
 domain: github-actions
 profile: scaffold
