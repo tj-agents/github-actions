@@ -1,0 +1,11 @@
+{
+  "name": "github-actions",
+  "displayName": "GitHub Actions",
+  "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+  "author": {
+    "name": "Tommy Seery"
+  },
+  "repository": "https://github.com/tj-agents/github-actions",
+  "skills": "./skills/",
+  "keywords": ["github-actions", "ci", "cd", "workflows"]
+}

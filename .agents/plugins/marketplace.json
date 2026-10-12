@@ -1,0 +1,20 @@
+{
+  "name": "github-actions-agents",
+  "interface": {
+    "displayName": "GitHub Actions"
+  },
+  "plugins": [
+    {
+      "name": "github-actions",
+      "source": {
+        "source": "local",
+        "path": "./plugins/github-actions"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

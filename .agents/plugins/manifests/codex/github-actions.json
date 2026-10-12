@@ -1,0 +1,20 @@
+{
+  "name": "github-actions",
+  "version": "0.1.0",
+  "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+  "author": {
+    "name": "Tommy Seery"
+  },
+  "repository": "https://github.com/tj-agents/github-actions",
+  "skills": "./skills/",
+  "keywords": ["github-actions", "ci", "cd", "workflows"],
+  "interface": {
+    "displayName": "GitHub Actions",
+    "shortDescription": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+    "longDescription": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+    "developerName": "Tommy Seery",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Teach me the next GitHub Actions concept my current task needs."
+  }
+}

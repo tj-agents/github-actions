@@ -1,0 +1,180 @@
+{
+  "plugin": "github-actions",
+  "dependencies": [],
+  "profiles": {
+    "core": [
+      "build",
+      "domain-design",
+      "errors",
+      "libraries",
+      "structure",
+      "style",
+      "testing"
+    ],
+    "knowledge": [
+      "direction",
+      "knowledge",
+      "learning"
+    ],
+    "scaffold": [
+      "scaffold"
+    ]
+  },
+  "compatibilitySkillAliases": {},
+  "skills": [
+    {
+      "name": "build",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "direction",
+      "kind": "knowledge",
+      "profile": "knowledge",
+      "applicability": [
+        "GitHub Actions learning"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "domain-design",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "errors",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "knowledge",
+      "kind": "knowledge",
+      "profile": "knowledge",
+      "applicability": [
+        "GitHub Actions learning"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "learning",
+      "kind": "knowledge",
+      "profile": "knowledge",
+      "applicability": [
+        "GitHub Actions projects and learning"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "libraries",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "scaffold",
+      "kind": "utility",
+      "profile": "scaffold",
+      "applicability": [
+        "new GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "structure",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "style",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "testing",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    }
+  ]
+}
