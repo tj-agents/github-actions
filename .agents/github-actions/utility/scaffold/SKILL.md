@@ -1,6 +1,6 @@
 ---
 name: scaffold
-description: Create a new GitHub Actions project in the File structure `github-actions:structure` records. Use when starting a GitHub Actions project; it creates nothing until that File structure is agreed.
+description: Deliberately creates nothing — GitHub Actions workflows are written by the scaffold that owns a repository's deploy target, into the File structure `github-actions:structure` records. Use to find which scaffold writes a project's workflows.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -11,17 +11,18 @@ provenance: house
 
 # GitHub Actions project scaffold
 
-Creates a project in the File structure `github-actions:structure` records. Its scripts and templates sit beside
-this file.
+Creates nothing: this package holds conventions, not a scaffolder. Workflows come from the scaffold that owns the
+deploy target, such as `azure:scaffold`, and follow this package's contracts.
 
 ## Create a project
 
-_Nothing yet._ Build the scaffold once `github-actions:structure` has an agreed File structure.
+Run the owning package's scaffold; it writes `.github/` into the File structure `github-actions:structure`
+records.
 
 ## Build and adapt
 
-_Nothing yet._
+Change generated workflows only within this package's contracts.
 
 ## Validation and publication
 
-_Nothing yet._
+`github-actions:testing` owns workflow validation.

@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Tommy's agreed GitHub Actions testing — test tiers, their naming, layout and fixtures. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
+description: Tommy's agreed GitHub Actions workflow validation, required-check gate, test-job layout and test artifacts. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
 kind: contract
 domain: github-actions
 profile: core
