@@ -15,8 +15,27 @@ Owns the repository and module layout, visibility, and where dependencies are wi
 
 ## Agreed
 
-_Nothing yet._ Propose a rule through `github-actions:learning`'s convention procedure.
+- A deployed service has `pr.yml` (pull request verification and an optional preview), `ci.yml` (push to
+  `main`: verify, then deploy to the shared non-production environment), `prod.yml` (tag-triggered
+  production) and `pr-closed.yml` (preview teardown). A library, tool or plugin has `ci.yml` and, if it
+  publishes, `release.yml`. Source: survey of production services and Tommy's repositories, 2026-10-12.
+- A step sequence repeated across jobs is a composite action at `.github/actions/<kebab-name>/action.yml`;
+  a whole job reused by several callers, such as a per-region deploy, is a reusable workflow
+  (`on: workflow_call`). Use a composite where the caller's job name must remain the check context.
+  Source: survey of production services and Tommy's repositories, 2026-10-12.
+- Shared cross-repository workflows live in one pipeline repository, and callers pin them as
+  `github-actions:security` requires.
 
 ## File structure
 
-_Nothing yet._ Once agreed, this is the tree `github-actions:scaffold` creates.
+```text
+.github/
+  dependabot.yml
+  actions/<name>/action.yml
+  workflows/
+    pr.yml  ci.yml  prod.yml  pr-closed.yml      deployed service
+    ci.yml  release.yml                          library, tool or plugin
+    <verb>-<object>.yml                          reusable workflows, e.g. deploy-region.yml
+```
+
+The scaffold that owns a repository's deploy target writes its workflows into this tree.

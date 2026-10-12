@@ -1,6 +1,6 @@
 ---
 name: build
-description: Tommy's agreed GitHub Actions build — toolchain pin, build configuration, the verification gate and CI. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
+description: Tommy's agreed GitHub Actions runners, toolchain versions and caching. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
 kind: contract
 domain: github-actions
 profile: core
@@ -11,8 +11,13 @@ provenance: house
 
 # GitHub Actions build
 
-Owns the toolchain pin, build configuration, the verification gate and CI.
+Owns runners, toolchain versions and caching.
 
 ## Agreed
 
-_Nothing yet._ Propose a rule through `github-actions:learning`'s convention procedure.
+- Jobs run on GitHub-hosted `ubuntu-latest` by default; a matrix adds `windows-latest` only for a
+  cross-platform product.
+- Toolchain versions come from repository files (`global-json-file`, `node-version-file`,
+  `packageManager`), never from numbers duplicated in YAML. Terraform's version is pinned exactly.
+- Dependency caching uses the setup actions' built-in `cache:`; `actions/cache` only covers what they
+  cannot.
