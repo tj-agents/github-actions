@@ -56,7 +56,7 @@ they are headed and the references to teach from. Read both before teaching or h
 
 The contract skills (`github-actions:security`, `github-actions:style`, `github-actions:structure`,
 `github-actions:domain-design`, `github-actions:errors`, `github-actions:testing`, `github-actions:build`,
-`github-actions:libraries`) start empty and grow only from decisions made in real projects.
+`github-actions:libraries`) hold only rules Tommy has decided.
 
 1. When a task needs a convention that is not recorded, stop and say so.
 2. Explain the concept and the realistic options with sources from `github-actions:direction`, and recommend one.

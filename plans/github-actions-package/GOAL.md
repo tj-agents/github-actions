@@ -49,6 +49,11 @@ subjects, deploy commands and the workflow files its scaffold emits; those files
   `direction` references, a conventions-only `scaffold` and `.agents/delivery-authorization.json` written on
   `Feature/Conventions`. sync `-Check`, `kit:check`, skill-reference and tier-payload checks pass; audit clean.
 
+- 2026-10-12: two independent reviews. Fixed: job-level `permissions` replaces rather than adds; citations
+  map onto `direction`'s references; `learning` no longer claims contracts start empty. Kept: the 2025-08-15
+  changelog date (verified) and kit's required `## Validation and publication` heading.
+- 2026-10-12: marketplace PR 6 merged at `291edc7`, so `github-actions` is listed in the catalog.
+
 ## Follow-ups outside this repository (not authorized here)
 
 - kit: `plugin-ci.yml` and the vendored `ci.yml` reference actions and the reusable workflow by tag, with no
