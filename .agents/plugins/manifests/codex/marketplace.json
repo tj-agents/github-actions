@@ -1,0 +1,6 @@
+{
+  "name": "github-actions-agents",
+  "interface": {
+    "displayName": "GitHub Actions"
+  }
+}

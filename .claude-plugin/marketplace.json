@@ -1,0 +1,21 @@
+{
+  "name": "github-actions-agents",
+  "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+  "owner": {
+    "name": "Tommy Seery"
+  },
+  "plugins": [
+    {
+      "name": "github-actions",
+      "source": "./plugins/github-actions",
+      "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
+      "category": "Productivity",
+      "keywords": [
+        "github-actions",
+        "ci",
+        "cd",
+        "workflows"
+      ]
+    }
+  ]
+}

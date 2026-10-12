@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "plugin": "github-actions-agents/github-actions",
+  "source_roots": [".agents/github-actions"],
+  "requires": {
+    "marketplaces": [{"id": "github-actions-agents", "repository": "tj-agents/github-actions"}, {"id": "base-agents", "repository": "tj-agents/core"}],
+    "plugins": ["github-actions-agents/github-actions", "base-agents/base"],
+    "hooks": [],
+    "permissions": {"claude_allow": [], "codex_prefix_rules": []}
+  }
+}
