@@ -1,6 +1,6 @@
 ---
 name: libraries
-description: Tommy's agreed GitHub Actions dependency policy — when to take a dependency and which are chosen. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
+description: Tommy's agreed GitHub Actions dependency policy — which actions to depend on and how they are kept current. Read before writing or reviewing GitHub Actions that touches it; nothing applies until it is recorded here.
 kind: contract
 domain: github-actions
 profile: core
