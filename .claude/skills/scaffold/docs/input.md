@@ -48,7 +48,11 @@ not provider-owned refs; local refs are `./.github/actions/<name>`. The catalog 
 checkout, GitHub API, artifact and toolchain actions, plus the vendor-owned pnpm, Terraform and Azure
 sign-in actions. Untrusted expression values belong in step `env`, never command/script bodies.
 Secrets also stay in step `env`; phase/job `env` cannot contain secrets. Artifact uploads declare
-`if-no-files-found` and `retention-days`.
+`if-no-files-found` and `retention-days`. Supplied uploads can omit `name` to use the action default
+or use a nonempty literal name other than the reserved `deployment` (including surrounding whitespace).
+Expression-valued names are rejected because they could resolve to the writer's artifact name.
+`overwrite` must be absent or the boolean `false`, including for diagnostic uploads and unarchived
+uploads. The writer's generated immutable deployment upload owns the reserved name.
 
 Expression guards recognize case-insensitive context names, dot access, literal bracket access and
 whole-context references. Secret-context references are allowed only in the consuming step's `env`.

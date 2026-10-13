@@ -294,6 +294,12 @@ def steps(value: object, where: str, composite: bool = False) -> list[dict]:
                 settings = step.get("with", {})
                 if settings.get("if-no-files-found") not in ("error", "warn") or type(settings.get("retention-days")) is not int or settings["retention-days"] < 1:
                     raise InputError(f"{label}: artifact policy and retention-days are required")
+                if "overwrite" in settings and settings["overwrite"] is not False:
+                    raise InputError(f"{label}: supplied artifact uploads cannot overwrite artifacts")
+                if "name" in settings:
+                    artifact_name = text(settings["name"], label + ".with.name")
+                    if "${{" in artifact_name or artifact_name.strip() == "deployment":
+                        raise InputError(f"{label}: supplied artifact names must be literal and cannot use reserved deployment")
         result.append(step)
     return result
 
@@ -672,7 +678,7 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             deploy_needs.append("build")
         if event == "pr":
             val = phases["plan"]
-            jobs["plan"] = executing_job("Plan the infrastructure", [checkout(), *toolchains(val.get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(val)], needs=["lint", "validate"], cloud=oidc)
+            jobs["plan"] = executing_job("Plan the infrastructure", [checkout(), *toolchains(val.get("roots", []), files, privileged=True), *setup_steps, *phase_steps(val)], needs=["lint", "validate"], cloud=oidc)
             jobs["plan"]["if"] = expr(cloud_condition + " && needs.lint.result == 'success' && needs.validate.result == 'success'")
             jobs["plan"]["environment"] = environments["preview"]
             jobs["plan"]["env"] = {"DEPLOY_ENVIRONMENT": environments["preview"], "PREVIEW_NUMBER": expr("github.event.pull_request.number")}
@@ -686,8 +692,8 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             recover_authorized = "steps.preview-state.outcome == 'success' && (steps.preview-state.outputs.closed == 'true' || steps.preview-state.outputs.closed == 'false')"
             recover_checkout = checkout(expr("steps.preview-state.outputs.closed == 'true' && steps.preview-state.outputs.default-branch || github.sha"))
             recover_steps = [preview_state_step(expr("github.event.pull_request.number"), recovery=True), *guarded_steps([recover_checkout], "true", recovery=True)]
-            recover_steps.extend(guarded_steps(toolchains(phases["recover"].get("roots", []), files, privileged=oidc), recover_open, recovery=True))
-            recover_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), recover_closed, recovery=True))
+            recover_steps.extend(guarded_steps(toolchains(phases["recover"].get("roots", []), files, privileged=True), recover_open, recovery=True))
+            recover_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=True), recover_closed, recovery=True))
             recover_steps.extend(guarded_steps(setup_steps, "true", recovery=True))
             recover_steps.append(provider_ready_step(recover_authorized, recovery=True))
             recover_steps.extend(provider_steps(phases["recover"], recover_open, recover_authorized, recovery=True))
@@ -725,8 +731,8 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
     deploy_roots = sorted({root for key in ("deploy", "readiness") for root in phases[key].get("roots", [])})
     deploy_checkout = checkout(expr("steps.preview-state.outputs.closed == 'true' && steps.preview-state.outputs.default-branch || inputs.source-sha"))
     deploy_steps = [preview_state_step(expr("inputs.preview-number")), deploy_checkout]
-    deploy_steps.extend(guarded_steps([directory_step, *toolchains(deploy_roots, files, privileged=oidc)], deploying))
-    deploy_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), cleaning))
+    deploy_steps.extend(guarded_steps([directory_step, *toolchains(deploy_roots, files, privileged=True)], deploying))
+    deploy_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=True), cleaning))
     deploy_steps.extend(copy.deepcopy(setup_steps))
     if build:
         deploy_steps.extend(guarded_steps([{"name": "Download the verified deployment artifact", "uses": action("actions/download-artifact"), "with": {"artifact-ids": expr("inputs.artifact-id"), "run-id": expr("inputs.source-run-id"), "github-token": expr("github.token"), "path": expr("runner.temp") + "/deployment", "merge-multiple": True}}], deploying))
@@ -741,7 +747,7 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
     deploy["env"] = {"DEPLOY_ENVIRONMENT": expr("inputs.preview-number != '' && '" + environments["preview"] + "' || inputs.environment"), "PREVIEW_NUMBER": expr("inputs.preview-number"), "SOURCE_RUN_ID": expr("inputs.source-run-id"), "SOURCE_SHA": expr("inputs.source-sha")}
     documents[".github/workflows/deploy-environment.yml"] = workflow("Deploy Environment", {"workflow_call": {"inputs": call_inputs}}, expr("inputs.preview-number != '' && format('deploy-pr-{0}', inputs.preview-number) || format('deploy-{0}', inputs.environment)"), False, {"deploy": deploy})
     destroy_inputs = {"preview-number": {"description": "Pull request number to destroy", "required": True, "type": "string"}}
-    destroy = executing_job("Destroy the closed preview environment", [checkout(expr("github.event.repository.default_branch")), *toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(phases["destroy"])], cloud=oidc, timeout=20)
+    destroy = executing_job("Destroy the closed preview environment", [checkout(expr("github.event.repository.default_branch")), *toolchains(phases["destroy"].get("roots", []), files, privileged=True), *setup_steps, *phase_steps(phases["destroy"])], cloud=oidc, timeout=20)
     destroy["environment"] = environments["preview"]
     destroy["env"] = {"DEPLOY_ENVIRONMENT": environments["preview"], "PREVIEW_NUMBER": expr("inputs.preview-number")}
     documents[".github/workflows/destroy-preview.yml"] = workflow("Destroy Preview", {"workflow_call": {"inputs": destroy_inputs}}, expr("format('deploy-pr-{0}', inputs.preview-number)"), False, {"destroy": destroy})
