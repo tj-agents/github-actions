@@ -100,8 +100,8 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. Complete independent immutable review and exact-head CI for the implemented workflow writer, then merge it.
-2. Review and merge it, then separately integrate Azure with the writer and remove generic duplication.
+1. Repair the seven completed independent-review findings, then complete fresh incremental review and exact-head CI.
+2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
 3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
 
 ### Slice size and boundary - 2026-10-13
@@ -137,3 +137,16 @@ will be added beyond the session limit.
 Tommy separately approved publishing the scoped M001 operator record directly to main at
 7812f8a25f139c230f847b77091fd87fc39ed0f2. Final review synchronizes once with that record-only base movement.
 Azure composition remains the next separate delivery slice; no Azure renderer code is changed here.
+
+### Completed independent review and repair owner - 2026-10-13
+
+Source checkpoint 29c7687ac9984cf725dabf246c0cd3960c8ee9dc passed the staged deny-list. The single
+pre-review synchronization with the approved record-only main movement froze head
+8cf9a69f297e07d78358e7a418c43c322cb31e1d against 7812f8a25f139c230f847b77091fd87fc39ed0f2.
+The independent native-general, API-contract and security evidence plus parent workflow review completed
+with seven findings, deduplicated in reviews/Feature-WorkflowWriter.md. Both source-host coverage checks
+passed. No candidate push or PR yet. Address-review is active with a sole L4 source writer, starting with
+the tightly coupled assembled-ID and phase-env defects. Parent owns review state, commits and delivery.
+After each verified repair group: staged deny-list audit and local checkpoint. Then fresh incremental
+review and two-OS exact-head CI before merge. The existing owning-account Node runtime permits executing
+the release-helper regression tests locally; no runtime installation or live cloud commands occurred.
