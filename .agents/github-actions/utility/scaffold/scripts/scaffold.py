@@ -632,7 +632,7 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             raise InputError("cloud-setup is reserved for the repeated provider setup envelope")
         if "inputs" in expression_contexts(phases["setup"]):
             raise InputError("provider.setup uses writer env data rather than workflow inputs")
-        documents[".github/actions/cloud-setup/action.yml"] = {"name": "Set up the cloud provider", "description": "Run the provider's repeated sign-in and initialization steps", "runs": {"using": "composite", "steps": [*toolchains(phases["setup"].get("roots", []), files, privileged=oidc), *phases["setup"]["steps"]]}}
+        documents[".github/actions/cloud-setup/action.yml"] = {"name": "Set up the cloud provider", "description": "Run the provider's repeated sign-in and initialization steps", "runs": {"using": "composite", "steps": [*toolchains(phases["setup"].get("roots", []), files, privileged=True), *phases["setup"]["steps"]]}}
         setup_steps = [{"name": "Set up the cloud provider", "uses": "./.github/actions/cloud-setup"}]
         if "env" in phases["setup"]:
             setup_steps[0]["env"] = copy.deepcopy(phases["setup"]["env"])

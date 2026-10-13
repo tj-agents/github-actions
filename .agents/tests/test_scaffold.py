@@ -206,6 +206,47 @@ class RenderingTests(unittest.TestCase):
             self.assertNotIn("env", job["steps"][-1])
             self.assertEqual({"DEPLOY_ENVIRONMENT", "PREVIEW_NUMBER", "SOURCE_SHA", "SOURCE_RUN_ID"}, job["env"].keys())
 
+    def test_shared_provider_setup_never_restores_dependency_caches(self):
+        for manager, lockfile in (("npm", "package-lock.json"), ("pnpm", "pnpm-lock.yaml")):
+            metadata = {
+                "global.json": '{"sdk":{"version":"10.0.100"}}',
+                "packages.lock.json": "{}",
+                "package.json": json.dumps({"engines": {"node": "24.x"}, "packageManager": manager + "@" + ("11.0.0" if manager == "npm" else "10.0.0")}),
+                lockfile: "{}" if manager == "npm" else "lockfileVersion: '9.0'",
+            }
+            for privileged_build in (True, False):
+                with self.subTest(manager=manager, privileged_build=privileged_build):
+                    config = fixture()
+                    config["provider"]["oidc"] = False
+                    config["provider"]["phases"]["setup"] = {"roots": ["."], "steps": [{"name": "Initialize provider", "run": "echo setup"}]}
+                    config["build"]["oidc"] = privileged_build
+                    _, docs = scaffold.render_documents(config, metadata)
+                    shared = docs[".github/actions/cloud-setup/action.yml"]["runs"]["steps"]
+                    for event in ("pr", "ci"):
+                        jobs = docs[f".github/workflows/{event}.yml"]["jobs"]
+                        build = jobs["build"]
+                        self.assertEqual(privileged_build, build["permissions"].get("id-token") == "write")
+                        self.assertEqual(privileged_build, any(step.get("uses") == "./.github/actions/cloud-setup" for step in build["steps"]))
+                        for scope, steps, cached in (("shared", shared, False), ("build", build["steps"], not privileged_build), ("verification", jobs["verify-unit"]["steps"], True)):
+                            with self.subTest(event=event, scope=scope):
+                                node = next(step for step in steps if "setup-node" in step.get("uses", ""))
+                                dotnet = next(step for step in steps if "setup-dotnet" in step.get("uses", ""))
+                                self.assertEqual("package.json", node["with"]["node-version-file"])
+                                self.assertIs(False, node["with"]["package-manager-cache"])
+                                self.assertEqual("global.json", dotnet["with"]["global-json-file"])
+                                if cached:
+                                    self.assertEqual(manager, node["with"]["cache"])
+                                    self.assertEqual(lockfile, node["with"]["cache-dependency-path"])
+                                    self.assertIs(True, dotnet["with"]["cache"])
+                                    self.assertEqual("packages.lock.json", dotnet["with"]["cache-dependency-path"])
+                                else:
+                                    for installation in (node, dotnet):
+                                        self.assertNotIn("cache", installation["with"])
+                                        self.assertNotIn("cache-dependency-path", installation["with"])
+                                if manager == "pnpm":
+                                    pnpm = next(step for step in steps if "pnpm/action-setup" in step.get("uses", ""))
+                                    self.assertEqual({"package_json_file": "package.json", "run_install": False}, pnpm["with"])
+
     def test_cloud_phase_roots_install_declared_toolchains(self):
         config = fixture()
         config["provider"]["oidc"] = True
