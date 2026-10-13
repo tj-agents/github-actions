@@ -97,6 +97,15 @@ def expression_tokens(value: str) -> list[list[tuple[str, str]]]:
         position += 2
 
 
+def expression_property(tokens: list[tuple[str, str]], index: int) -> str | None:
+    following = tokens[index + 1:index + 4]
+    if len(following) >= 2 and following[0] == ("symbol", ".") and following[1][0] == "name":
+        return following[1][1]
+    if len(following) == 3 and following[0] == ("symbol", "[") and following[1][0] == "string" and following[2] == ("symbol", "]"):
+        return following[1][1]
+    return None
+
+
 def expression_contexts(value: object) -> set[str]:
     if isinstance(value, dict):
         return set().union(*(expression_contexts(val) for val in value.values()))
@@ -114,15 +123,77 @@ def expression_contexts(value: object) -> set[str]:
             elif token[1] == "inputs":
                 contexts.update({"inputs", "untrusted"})
             elif token[1] == "github":
-                following = tokens[index + 1: index + 5]
-                property_name = None
-                if len(following) >= 2 and following[0] == ("symbol", ".") and following[1][0] == "name":
-                    property_name = following[1][1]
-                elif len(following) >= 3 and following[0] == ("symbol", "[") and following[1][0] == "string" and following[2] == ("symbol", "]"):
-                    property_name = following[1][1]
+                property_name = expression_property(tokens, index)
                 if property_name is None or property_name in {"event", "head_ref"}:
                     contexts.add("untrusted")
     return contexts
+
+
+def environment_references(value: object) -> set[str | None]:
+    if isinstance(value, dict):
+        return set().union(*(environment_references(val) for val in value.values()))
+    if isinstance(value, list):
+        return set().union(*(environment_references(val) for val in value))
+    if not isinstance(value, str):
+        return set()
+    references = set()
+    for tokens in expression_tokens(value):
+        for index, token in enumerate(tokens):
+            if token == ("name", "env") and (index == 0 or tokens[index - 1] != ("symbol", ".")):
+                references.add(expression_property(tokens, index))
+    return references
+
+
+def environment_contexts(value: object, environment: dict) -> set[str]:
+    contexts = expression_contexts(value)
+    pending = [(name, frozenset()) for name in environment_references(value)]
+    seen = set()
+    while pending:
+        name, path = pending.pop()
+        if name is None or name in path or name not in environment:
+            contexts.add("unknown-env")
+        elif name not in seen:
+            seen.add(name)
+            dependency = environment[name]
+            contexts.update(expression_contexts(dependency))
+            pending.extend((reference, path | {name}) for reference in environment_references(dependency))
+    return contexts
+
+
+def validate_environment_boundaries(config: dict) -> None:
+    composites = config["provider"]["composites"]
+    visited = set()
+
+    def check(scope: dict, inherited: dict, where: str, actions: frozenset[str]) -> None:
+        phase_env = {**inherited, **scope.get("env", {})}
+        for index, step in enumerate(scope["steps"]):
+            label = f"{where}.steps[{index}]"
+            environment = {key.lower(): val for key, val in {**phase_env, **step.get("env", {})}.items()}
+            for key, val in step.items():
+                if key != "env" and "secrets" in environment_contexts(val, environment):
+                    raise InputError(f"{label}: pass secrets through the consuming step env")
+            command = step.get("run")
+            if step.get("uses", "").startswith("actions/github-script@"):
+                command = step.get("with", {}).get("script", "")
+            if command is not None and environment_contexts(command, environment) & {"untrusted", "secrets", "unknown-env"}:
+                raise InputError(f"{label}: consume untrusted, secret or unresolved env values through environment variables")
+            use = step.get("uses", "")
+            if use.startswith("./"):
+                name = use.rsplit("/", 1)[-1]
+                if name in actions:
+                    raise InputError(f"{label}: recursive local composite action")
+                visited.add(name)
+                check(composites[name], {**phase_env, **step.get("env", {})}, "composite." + name, actions | {name})
+
+    writer_env = {key: "writer-owned" for key in RESERVED_ENV}
+    scopes = [*config["verify"].items(), *config["provider"]["phases"].items()]
+    if "build" in config:
+        scopes.append(("build", config["build"]))
+    for name, scope in scopes:
+        check(scope, writer_env, name, frozenset())
+    for name, scope in composites.items():
+        if name not in visited:
+            check(scope, writer_env, "composite." + name, frozenset({name}))
 
 
 def object_keys(value: object, allowed: set[str], where: str) -> dict:
@@ -194,6 +265,9 @@ def steps(value: object, where: str, composite: bool = False) -> list[dict]:
         for key in ("if", "working-directory"):
             if key in step:
                 text(step[key], label + "." + key)
+        if "if" in step:
+            condition = step["if"].strip()
+            step["if"] = condition if condition.startswith("${{") and condition.endswith("}}") else expr(condition)
         if any("secrets" in expression_contexts(val) for key, val in step.items() if key != "env"):
             raise InputError(f"{label}: pass secrets through the consuming step env")
         if "run" in step:
@@ -312,6 +386,7 @@ def validate(config: object) -> dict:
             use = step.get("uses", "")
             if use.startswith("./") and use.rsplit("/", 1)[-1] not in local_actions:
                 raise InputError(f"local action {use} is not provided")
+    validate_environment_boundaries(result)
     return result
 
 
