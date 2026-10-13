@@ -1,0 +1,41 @@
+name: Workflow Writer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-writer:
+    name: Verify the portable workflow writer
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node from repository metadata
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Test rendering, transactions and release assertions
+        env:
+          REQUIRE_RELEASE_TESTS: 'true'
+        run: python -B -m unittest discover -s .agents/tests -p test_scaffold.py
+      - name: Lint the emitted workflow shapes
+        run: python -B .agents/tests/verify_workflows.py
+      - name: Check generated hosts
+        run: python -B .agents/sync_generated.py --root . --check

@@ -38,4 +38,6 @@ Owns the repository and module layout, visibility, and where dependencies are wi
     <verb>-<object>.yml                          reusable workflows, e.g. deploy-region.yml
 ```
 
-The scaffold that owns a repository's deploy target writes its workflows into this tree.
+`github-actions:scaffold` owns the complete deployed-service workflow files and reusable job graph.
+The app scaffold composes its pure file map with app and provider output; Azure supplies cloud-specific
+steps and identity data. Source: Tommy's 2026-10-13 writer decision, superseding the conventions-only boundary.
