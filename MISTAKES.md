@@ -29,8 +29,9 @@
 - Cause: unknown insertion mechanism. The writer logged one explicit multi-file patch invocation, which
   reported success; these logs do not establish a retry or an internal double application. A separate
   renderer patch reported failed matching after its changes were already present.
-- Governing standard: post-mutation inspection was necessary; test execution alone did not prove unique
-  regression definitions. No upstream tool cause is claimed.
+- Governing standard: classification is unknown; the logs do not establish a missing, ambiguous or
+  violated rule as the cause. Runtime tests omitted a definition-uniqueness check; independent source
+  inspection caught the issue as intended. No upstream tool cause is claimed.
 - Impact and priority: redundant source and misleading coverage inspection; P3. Parent inspection caught
   the duplicates before the repair commit; no duplicate definitions were committed or published.
 - Source owner: standards-finish workflow-writer execution.
