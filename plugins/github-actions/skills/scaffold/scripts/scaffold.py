@@ -332,8 +332,8 @@ def validate(config: object) -> dict:
         raise InputError("prod-release must be a boolean")
     result = {"schema_version": 1, "prod-release": config.get("prod-release", True), "roots": roots(config.get("roots", ["."]), "roots")}
     verify = object_keys(config.get("verify"), {"unit", "integration", "end-to-end"}, "verify")
-    if "unit" not in verify:
-        raise InputError("verify.unit is required")
+    if verify and "unit" not in verify:
+        raise InputError("verify.unit is required when verification is nonempty")
     result["verify"] = {key: phase(val, "verify." + key) for key, val in verify.items()}
     provider = object_keys(config.get("provider"), {"name", "oidc", "ready", "environments", "phases", "composites"}, "provider")
     name = text(provider.get("name"), "provider.name")

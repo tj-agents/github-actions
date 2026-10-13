@@ -8,9 +8,12 @@ and build phases can declare their own roots. The pure renderer receives version
 file map; the CLI reads known metadata files from those roots and their ancestors. The prospective overlay
 wins over disk. Paths cannot be absolute or contain traversal.
 
-`verify.unit` is required. `verify.integration` adds a separate required check; `verify.end-to-end`
-runs only after a deployment succeeds. Every verification phase has a nonempty `steps` list and optional
-`roots`, scalar `env`, and a typed `matrix` of named string lists. Mandatory checks require success;
+`verify` is required and can be `{}` when the project has no application verification suite. An empty
+map emits no application test jobs; infrastructure validation, workflow lint and deployment gates still
+run. A nonempty `verify` must include `unit`. `verify.integration` adds a separate required check;
+`verify.end-to-end` runs only after a deployment succeeds. Every verification phase has a nonempty
+`steps` list and optional `roots`, scalar `env`, and a typed `matrix` of named string lists. Mandatory
+checks require success;
 `cloud-gates` separately proves whether explicitly optional operations ran or skipped as expected.
 
 `build` is optional for foundation-only profiles or providers that resolve already immutable references.

@@ -100,7 +100,7 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. All fourteen review findings have repair dispositions; complete fresh incremental review and exact-head CI.
+1. All fifteen review findings have repair dispositions; empty verification support is accepted. Complete fresh incremental review and exact-head CI.
 2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
 3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
 
@@ -252,3 +252,12 @@ Azure compatibility preparation resolves truthful absent app verification: accep
 with no app suite, while nonempty verification still requires unit. This changes data absence support,
 adds no scaffold switch and avoids a fabricated Terraform unit job. It is the next small API checkpoint
 within the same complete writer boundary before fresh independent review and exact-head CI.
+
+Empty-verification API accepted: verify:{} emits no application test jobs and retains workflow lint,
+infrastructure validation, successful deployment prerequisites and immutable production promotion.
+Missing or malformed verify, nonempty suites without unit and empty phase steps still reject before
+writing. Parent inspected the renderer/docs/tests; all 78 required-Node tests passed without skips,
+AST uniqueness, 72-file generation/freshness and whitespace passed. Sole-writer handles completed.
+This small absence case and WW-15 stay within the existing complete writer API/security boundary;
+Azure composition/removal and dotnet boilerplate remain separate delivery slices. Next phase is fresh
+independent L4 correctness/API and L2 security review, followed by exact-head two-OS CI and delivery.
