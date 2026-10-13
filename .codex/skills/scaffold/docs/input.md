@@ -68,7 +68,8 @@ Reusable deploy exposes `environment`, `preview-number`, `source-sha`, `source-r
 `SOURCE_RUN_ID` and `ARTIFACT_DIRECTORY` as environment variables. Teardown and recovery receive the
 first two. `PREVIEW_NUMBER` contains the complete PR number; provider-specific resource naming budgets
 and state paths remain provider logic. Preview deploy, destroy and cancellation recovery share the
-`deploy-pr-<number>` concurrency group without cancelling an in-flight operation. Cloud planning and
+`deploy-pr-<number>` concurrency group without cancelling an in-flight operation. The PR caller also
+keeps cancellation disabled because it owns infrastructure operations. Cloud planning and
 preview/recovery run only for same-repository pull requests; preview deployment additionally needs the
 `deploy-preview` label. Required cloud operations cannot silently skip after an upstream failure.
 
@@ -82,3 +83,18 @@ use setup actions only in verification and unprivileged build jobs; cloud jobs d
 
 Close cleanup keeps the trust/readiness gate and does not depend on the current preview label. Provider
 destroy steps must be idempotent for absent instances, including pull requests whose label was removed.
+
+Inside the acquired preview lock, deploy and recovery query the current PR state before checkout,
+provider setup or commands. API failures, invalid numbers and untrusted PR repositories fail before
+cloud work. Open PRs follow the requested operation. Closed trusted PRs select the repository's live
+default branch and run the existing destroy phase in the same lock; deploy, readiness and artifact
+download are skipped. This preserves cleanup when a late deploy or recovery replaces pending close
+teardown. Closed cleanup uses default-branch scripts and local composites, including provider setup;
+it never calls another reusable workflow that would reacquire the same lock. CI and production calls
+with no preview number keep their verified source and artifact path and do not query PR state.
+
+Provider step conditions retain their status functions, including `always()` and `failure()`, after a
+provider step fails. Each operation branch also requires an authorized lifecycle decision and a
+successful checkout/toolchain/setup/artifact prerequisite checkpoint. A provider condition cannot
+bypass failed state lookup or failed prerequisites. Recovery's default step conditions tolerate
+cancellation; explicit provider status conditions keep their requested semantics.

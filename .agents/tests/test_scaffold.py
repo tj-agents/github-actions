@@ -31,6 +31,74 @@ def body(name):
 
 
 class RenderingTests(unittest.TestCase):
+    def test_provider_status_functions_are_preserved_behind_lifecycle_authorization(self):
+        config = fixture()
+        config["provider"]["environments"] = {"preview": "ephemeral"}
+        phases = config["provider"]["phases"]
+        phases["deploy"]["steps"][0]["if"] = "${{ always() }}"
+        phases["readiness"]["steps"][0]["if"] = "failure()"
+        phases["recover"]["steps"][0]["if"] = "always()"
+        phases["destroy"]["steps"][0]["if"] = "failure()"
+        _, docs = scaffold.render_documents(config)
+        deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+        recover = docs[".github/workflows/pr.yml"]["jobs"]["recover-preview"]
+        self.assertEqual("${{ inputs.preview-number != '' && 'ephemeral' || inputs.environment }}", deploy["environment"])
+        self.assertEqual(deploy["environment"], deploy["env"]["DEPLOY_ENVIRONMENT"])
+        for job, names in ((deploy, ("Deploy the verified package", "Verify the serving revision", "Destroy the preview")), (recover, ("Recover the infrastructure lock", "Destroy the preview"))):
+            prerequisite = next(step for step in job["steps"] if step.get("id") == "provider-ready")
+            self.assertLess(job["steps"].index(prerequisite), min(index for index, step in enumerate(job["steps"]) if step["name"] in names))
+            for step in job["steps"]:
+                if step["name"] in names:
+                    self.assertIn("steps.provider-ready.outcome == 'success'", step["if"])
+                    self.assertIn("steps.preview-state.outcome == 'success'", step["if"])
+                    self.assertNotIn("success()", step["if"])
+                    self.assertNotIn("!failure()", step["if"])
+                    self.assertTrue("(always())" in step["if"] or "(failure())" in step["if"])
+
+    def test_preview_lifecycle_checks_state_before_checkout_and_provider_commands(self):
+        config = fixture()
+        config["provider"]["oidc"] = True
+        phases = config["provider"]["phases"]
+        phases["setup"] = {"steps": [{"name": "Sign in to provider", "run": "echo login"}]}
+        phases["deploy"]["steps"][0]["if"] = "${{ vars.ALLOW_DEPLOY == 'true' }}"
+        phases["destroy"]["steps"][0]["if"] = "vars.ALLOW_CLEANUP == 'true'"
+        _, docs = scaffold.render_documents(config)
+        deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+        recover = docs[".github/workflows/pr.yml"]["jobs"]["recover-preview"]
+        for job in (deploy, recover):
+            self.assertEqual("preview-state", job["steps"][0]["id"])
+            self.assertIn("actions/github-script", job["steps"][0]["uses"])
+            self.assertIn("actions/checkout", job["steps"][1]["uses"])
+            self.assertIn("steps.preview-state.outputs.default-branch", job["steps"][1]["with"]["ref"])
+            self.assertEqual("read", job["permissions"]["pull-requests"])
+            self.assertLess(1, next(index for index, step in enumerate(job["steps"]) if step.get("uses") == "./.github/actions/cloud-setup"))
+            cleanup = next(step for step in job["steps"] if step["name"] == "Destroy the preview")
+            self.assertIn("closed == 'true'", cleanup["if"])
+            self.assertIn("vars.ALLOW_CLEANUP == 'true'", cleanup["if"])
+            self.assertFalse(any(step.get("uses") == "./.github/workflows/destroy-preview.yml" for step in job["steps"]))
+        for name in ("Deploy the verified package", "Verify the serving revision", "Download the verified deployment artifact", "Set the verified artifact directory"):
+            step = next(step for step in deploy["steps"] if step["name"] == name)
+            self.assertIn("closed != 'true'", step["if"])
+        self.assertIn("vars.ALLOW_DEPLOY == 'true'", next(step for step in deploy["steps"] if step["name"] == "Deploy the verified package")["if"])
+        self.assertIn("closed != 'true'", next(step for step in recover["steps"] if step["name"] == "Recover the infrastructure lock")["if"])
+        for step in recover["steps"]:
+            self.assertIn("!failure()", step["if"])
+        self.assertIs(False, recover["steps"][1]["with"]["persist-credentials"])
+        self.assertIs(False, deploy["steps"][1]["with"]["persist-credentials"])
+        self.assertEqual("${{ inputs.preview-number != '' }}", deploy["steps"][0]["if"])
+
+    def test_infrastructure_callers_do_not_cancel_and_cap_preview_read_permissions(self):
+        _, docs = scaffold.render_documents(fixture())
+        for event in ("pr", "ci", "prod", "pr-closed", "deploy-environment", "destroy-preview"):
+            self.assertIs(False, docs[f".github/workflows/{event}.yml"]["concurrency"]["cancel-in-progress"])
+        for event, key in (("pr", "deploy-preview"), ("ci", "deploy-ci"), ("prod", "deploy-prod")):
+            self.assertEqual("read", docs[f".github/workflows/{event}.yml"]["jobs"][key]["permissions"]["pull-requests"])
+        for job in docs[".github/workflows/pr.yml"]["jobs"].values():
+            if job.get("name") not in {"Deploy the environment", "Recover cancelled preview infrastructure operations"}:
+                self.assertNotIn("pull-requests", job["permissions"])
+        for event, key in (("ci", "deploy-ci"), ("prod", "deploy-prod")):
+            self.assertEqual("", docs[f".github/workflows/{event}.yml"]["jobs"][key]["with"]["preview-number"])
+
     def test_plan_waits_for_successful_lint_and_validation_before_provider_setup(self):
         config = fixture()
         config["provider"]["oidc"] = True
@@ -53,8 +121,8 @@ class RenderingTests(unittest.TestCase):
         phases["readiness"]["steps"][0].update({"id": "serving", "env": {"REVISION": "${{ steps.deployed.outputs.revision }}"}})
         _, docs = scaffold.render_documents(config)
         deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
-        self.assertEqual(["deployed", "serving"], [step["id"] for step in deploy["steps"] if "id" in step])
-        self.assertEqual("${{ steps.deployed.outputs.revision }}", deploy["steps"][-1]["env"]["REVISION"])
+        self.assertEqual(["preview-state", "provider-ready", "deployed", "serving"], [step["id"] for step in deploy["steps"] if "id" in step])
+        self.assertEqual("${{ steps.deployed.outputs.revision }}", next(step for step in deploy["steps"] if step.get("id") == "serving")["env"]["REVISION"])
         for event in ("pr", "ci"):
             build = docs[f".github/workflows/{event}.yml"]["jobs"]["build"]
             self.assertEqual(["package", "artifact"], [step["id"] for step in build["steps"] if "id" in step])
@@ -88,12 +156,14 @@ class RenderingTests(unittest.TestCase):
         phases["readiness"]["steps"].append({"name": "Inspect serving revision", "run": "echo inspect", "env": {"MODE": "inspect"}})
         _, docs = scaffold.render_documents(config)
         job = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
-        self.assertEqual({"MODE": "apply", "DEPLOY_ONLY": "true"}, job["steps"][-3]["env"])
-        self.assertEqual({"MODE": "serving", "READINESS_ONLY": "true"}, job["steps"][-2]["env"])
-        self.assertEqual({"MODE": "inspect", "READINESS_ONLY": "true"}, job["steps"][-1]["env"])
-        self.assertEqual({"DEPLOY_ENVIRONMENT": "${{ inputs.environment }}", "PREVIEW_NUMBER": "${{ inputs.preview-number }}", "SOURCE_RUN_ID": "${{ inputs.source-run-id }}", "SOURCE_SHA": "${{ inputs.source-sha }}"}, job["env"])
-        for step in job["steps"][:-3]:
-            self.assertNotIn("env", step)
+        steps = {step["name"]: step for step in job["steps"]}
+        self.assertEqual({"MODE": "apply", "DEPLOY_ONLY": "true"}, steps["Deploy the verified package"]["env"])
+        self.assertEqual({"MODE": "serving", "READINESS_ONLY": "true"}, steps["Verify the serving revision"]["env"])
+        self.assertEqual({"MODE": "inspect", "READINESS_ONLY": "true"}, steps["Inspect serving revision"]["env"])
+        self.assertEqual({"DEPLOY_ENVIRONMENT": "${{ inputs.preview-number != '' && 'preview' || inputs.environment }}", "PREVIEW_NUMBER": "${{ inputs.preview-number }}", "SOURCE_RUN_ID": "${{ inputs.source-run-id }}", "SOURCE_SHA": "${{ inputs.source-sha }}"}, job["env"])
+        for step in job["steps"]:
+            if step["name"] not in {"Resolve the live preview lifecycle", "Deploy the verified package", "Verify the serving revision", "Inspect serving revision"}:
+                self.assertNotIn("env", step)
 
     def test_verify_validate_destroy_and_recovery_env_stay_on_their_steps(self):
         config = fixture()
@@ -107,16 +177,19 @@ class RenderingTests(unittest.TestCase):
             val["env"] = {"MODE": key, "PHASE_ONLY": "true"}
             val["steps"].append({"name": "Inspect " + key, "run": "echo inspect", "env": {"MODE": "step"}})
         _, docs = scaffold.render_documents(config)
-        for event, key, _ in scopes:
+        for event, key, val in scopes:
             with self.subTest(job=key):
                 job = docs[f".github/workflows/{event}.yml"]["jobs"][key]
-                self.assertEqual({"MODE": key, "PHASE_ONLY": "true"}, job["steps"][-2]["env"])
-                self.assertEqual({"MODE": "step", "PHASE_ONLY": "true"}, job["steps"][-1]["env"])
+                emitted = {step["name"]: step for step in job["steps"]}
+                self.assertEqual({"MODE": key, "PHASE_ONLY": "true"}, emitted[val["steps"][0]["name"]]["env"])
+                self.assertEqual({"MODE": "step", "PHASE_ONLY": "true"}, emitted["Inspect " + key]["env"])
                 self.assertFalse({"MODE", "PHASE_ONLY", "SETUP_ONLY"} & job.get("env", {}).keys())
                 for step in job["steps"][:-2]:
                     if step.get("uses") == "./.github/actions/cloud-setup":
                         self.assertEqual({"MODE": "setup", "SETUP_ONLY": "true"}, step["env"])
-                    else:
+                    elif step["name"] == "Resolve the live preview lifecycle":
+                        self.assertEqual({"PREVIEW_NUMBER": "${{ github.event.pull_request.number }}"}, step["env"])
+                    elif step["name"] not in {phase_step["name"] for scope in scopes for phase_step in scope[2]["steps"]}:
                         self.assertNotIn("env", step)
         self.assertEqual({"fail-fast": False, "matrix": {"runtime": ["stable", "preview"]}}, docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]["strategy"])
 
@@ -142,9 +215,13 @@ class RenderingTests(unittest.TestCase):
         jobs = [docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"], docs[".github/workflows/destroy-preview.yml"]["jobs"]["destroy"], docs[".github/workflows/pr.yml"]["jobs"]["recover-preview"]]
         for job in jobs:
             installations = [step for step in job["steps"] if "setup-dotnet" in step.get("uses", "")]
-            self.assertEqual(1, len(installations))
-            self.assertEqual({"global-json-file": "global.json"}, installations[0]["with"])
-            self.assertLess(job["steps"].index(installations[0]), len(job["steps"]) - 1)
+            self.assertEqual(1 if job["name"] == "Destroy the closed preview environment" else 2, len(installations))
+            for installation in installations:
+                self.assertEqual({"global-json-file": "global.json"}, installation["with"])
+                self.assertLess(job["steps"].index(installation), len(job["steps"]) - 1)
+            if len(installations) == 2:
+                self.assertIn("closed != 'true'", installations[0]["if"])
+                self.assertIn("closed == 'true'", installations[1]["if"])
 
     def test_complete_default_set_and_optional_release(self):
         config = fixture()
@@ -568,6 +645,135 @@ class GateBehaviorTests(unittest.TestCase):
             with self.subTest(selected=selected, status=status):
                 result = self.run_gate("optional-gates.sh", {"deploy-preview": {"result": status}}, {"DEPLOY_PREVIEW": selected})
                 self.assertEqual(code, result.returncode)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is required to execute the mocked preview lifecycle")
+class PreviewLifecycleBehaviorTests(unittest.TestCase):
+    def resolve_state(self, case):
+        harness = """
+const input = JSON.parse(process.argv[1]);
+const outputs = {};
+const calls = [];
+const context = {repo: {owner: 'neutral', repo: 'service'}};
+const core = {setOutput: (key, value) => { outputs[key] = value; }};
+const github = {rest: {
+ pulls: {get: async args => {
+   calls.push(['pull', args.pull_number]);
+   if (input.apiError) throw Error('API unavailable');
+   return {data: {number: input.responseNumber ?? args.pull_number, state: input.state || 'open',
+     base: {repo: {full_name: input.baseRepo || 'neutral/service'}},
+     head: {repo: input.missingHead ? null : {full_name: input.headRepo || 'neutral/service'}}}};
+ }},
+ repos: {get: async () => {
+   calls.push(['repository']);
+   if (input.repoError) throw Error('Repository API unavailable');
+   return {data: {full_name: input.repoName || 'neutral/service', default_branch: input.defaultBranch ?? 'main'}};
+ }},
+}};
+(async () => {
+SCRIPT
+})().then(() => process.stdout.write(JSON.stringify({outputs, calls}))).catch(e => { process.stderr.write(JSON.stringify({message: e.message, outputs, calls})); process.exitCode = 1; });
+""".replace("SCRIPT", scaffold.asset("preview-state.js"))
+        return subprocess.run([shutil.which("node"), "-e", harness, json.dumps(case)], env={**os.environ, "PREVIEW_NUMBER": case.get("number", "42")}, capture_output=True, text=True)
+
+    def evaluate_condition(self, condition, *, state_outcome="success", closed="false", ready="success", status="success", number="42"):
+        harness = """
+const data = JSON.parse(process.argv[1]);
+const steps = {'preview-state': {outcome: data.stateOutcome, outputs: {closed: data.closed}}, 'provider-ready': {outcome: data.ready}};
+const inputs = {'preview-number': data.number};
+const always = () => true;
+const failure = () => data.status === 'failure';
+const success = () => data.status === 'success';
+const cancelled = () => data.status === 'cancelled';
+const expression = data.condition.slice(3, -2).replaceAll('steps.preview-state', 'steps["preview-state"]').replaceAll('steps.provider-ready', 'steps["provider-ready"]').replaceAll('inputs.preview-number', 'inputs["preview-number"]');
+const result = new Function('steps', 'inputs', 'always', 'failure', 'success', 'cancelled', `return Boolean(${expression});`)(steps, inputs, always, failure, success, cancelled);
+process.stdout.write(JSON.stringify(result));
+"""
+        result = subprocess.run([shutil.which("node"), "-e", harness, json.dumps({"condition": condition, "stateOutcome": state_outcome, "closed": closed, "ready": ready, "status": status, "number": number})], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_provider_status_controls_cannot_bypass_failed_lifecycle_prerequisites(self):
+        config = fixture()
+        phases = config["provider"]["phases"]
+        phases["deploy"]["steps"][0]["if"] = "always()"
+        phases["readiness"]["steps"][0]["if"] = "failure()"
+        phases["recover"]["steps"][0]["if"] = "always()"
+        phases["destroy"]["steps"][0]["if"] = "failure()"
+        _, docs = scaffold.render_documents(config)
+        deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+        recover = docs[".github/workflows/pr.yml"]["jobs"]["recover-preview"]
+        error = self.resolve_state({"apiError": True})
+        self.assertEqual(1, error.returncode)
+        self.assertEqual({}, json.loads(error.stderr)["outputs"])
+        selected = [(deploy, "Deploy the verified package", "false"), (deploy, "Verify the serving revision", "false"), (deploy, "Destroy the preview", "true"), (recover, "Recover the infrastructure lock", "false"), (recover, "Destroy the preview", "true")]
+        for job, name, closed in selected:
+            condition = next(step for step in job["steps"] if step["name"] == name)["if"]
+            with self.subTest(step=name, job=job["name"]):
+                self.assertFalse(self.evaluate_condition(condition, state_outcome="failure", closed="", ready="skipped", status="failure"))
+                self.assertFalse(self.evaluate_condition(condition, closed="", status="failure"))
+                self.assertFalse(self.evaluate_condition(condition, closed=closed, ready="skipped", status="failure"))
+                self.assertTrue(self.evaluate_condition(condition, closed=closed, status="failure"))
+        condition = next(step for step in recover["steps"] if step["name"] == "Recover the infrastructure lock")["if"]
+        self.assertTrue(self.evaluate_condition(condition, status="cancelled"))
+        condition = next(step for step in deploy["steps"] if step["name"] == "Deploy the verified package")["if"]
+        self.assertTrue(self.evaluate_condition(condition, state_outcome="skipped", closed="", status="failure", number=""))
+
+    def test_open_and_closed_preview_select_operation_and_trusted_default_branch(self):
+        for state in ("open", "closed"):
+            with self.subTest(state=state):
+                result = self.resolve_state({"state": state, "defaultBranch": "protected-main"})
+                self.assertEqual(0, result.returncode, result.stderr)
+                data = json.loads(result.stdout)
+                self.assertEqual({"closed": str(state == "closed").lower(), "default-branch": "protected-main" if state == "closed" else ""}, data["outputs"])
+                self.assertEqual([["pull", 42], ["repository"]] if state == "closed" else [["pull", 42]], data["calls"])
+
+    def test_errors_untrusted_sources_and_invalid_state_produce_no_authorizing_output(self):
+        cases = [{"apiError": True}, {"state": "closed", "repoError": True}, {"headRepo": "fork/service"}, {"baseRepo": "other/service"}, {"missingHead": True}, {"responseNumber": 43}, {"state": "unexpected"}, {"state": "closed", "repoName": "other/service"}, {"state": "closed", "defaultBranch": ""}]
+        for case in cases:
+            with self.subTest(case=case):
+                result = self.resolve_state(case)
+                self.assertEqual(1, result.returncode)
+                self.assertEqual({}, json.loads(result.stderr)["outputs"])
+
+    def test_invalid_preview_numbers_fail_before_querying(self):
+        for number in ("0", "01", "-1", "1.0", "garbage", "42 ", "9007199254740992"):
+            with self.subTest(number=number):
+                result = self.resolve_state({"number": number})
+                self.assertEqual(1, result.returncode)
+                data = json.loads(result.stderr)
+                self.assertEqual({}, data["outputs"])
+                self.assertEqual([], data["calls"])
+
+    def test_non_preview_ci_and_production_do_not_query_pull_requests(self):
+        result = self.resolve_state({"number": "", "apiError": True})
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual({"outputs": {"closed": "false", "default-branch": ""}, "calls": []}, json.loads(result.stdout))
+
+    def test_late_deploy_or_recovery_replacing_pending_teardown_preserves_cleanup(self):
+        _, docs = scaffold.render_documents(fixture())
+        for survivor in ("deploy", "recover-preview"):
+            with self.subTest(survivor=survivor):
+                active = "apply-started-while-open"
+                pending = "close-destroy"
+                preview_exists = False
+                pending = survivor
+                preview_exists = active == "apply-started-while-open"
+                self.assertEqual(survivor, pending)
+                self.assertTrue(preview_exists)
+                result = self.resolve_state({"state": "closed"})
+                self.assertEqual(0, result.returncode, result.stderr)
+                decision = json.loads(result.stdout)["outputs"]
+                job = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"] if survivor == "deploy" else docs[".github/workflows/pr.yml"]["jobs"][survivor]
+                cleanup = next(step for step in job["steps"] if step["name"] == "Destroy the preview")
+                self.assertEqual("true", decision["closed"])
+                self.assertIn("closed == 'true'", cleanup["if"])
+                if decision["closed"] == "true":
+                    preview_exists = False
+                self.assertFalse(preview_exists)
+                self.assertEqual("main", decision["default-branch"])
+                self.assertIn("steps.preview-state.outputs.default-branch", job["steps"][1]["with"]["ref"])
+                self.assertIn("deploy-pr-", (job.get("concurrency") or docs[".github/workflows/deploy-environment.yml"]["concurrency"])["group"])
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is required to execute the mocked GitHub API assertion")
