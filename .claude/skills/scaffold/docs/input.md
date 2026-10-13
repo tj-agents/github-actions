@@ -52,8 +52,10 @@ Secrets also stay in step `env`; phase/job `env` cannot contain secrets. Artifac
 
 Expression guards recognize case-insensitive context names, dot access, literal bracket access and
 whole-context references. Secret-context references are allowed only in the consuming step's `env`.
-`inputs`, `github.event`, `github.head_ref`, whole `github` and computed GitHub property access must
-pass through step `env` before a command or GitHub script consumes them. Trusted GitHub metadata and
+`inputs`, `github.event`, `github.head_ref`, whole `github`, computed GitHub property access and
+runtime data from `steps`, `needs` or `matrix` must pass through step `env` before a command or GitHub
+script consumes them. Runtime outputs and matrix values retain this boundary even when their producer
+is another configured step. Conditions may reference these contexts. Trusted GitHub metadata and
 quoted expression literals remain allowed. PR planning waits for both lint and infrastructure
 validation to succeed before provider setup and commands run.
 
@@ -101,8 +103,12 @@ cancellation; explicit provider status conditions keep their requested semantics
 
 Step `if` accepts bare or wrapped expressions; both forms receive the same context validation before
 operation guards are composed. Command and GitHub-script interpolation through `env` is checked against
-the effective phase, invocation and step env, including transitive aliases in local composites.
-Explicit step values override inherited values. Untrusted, secret and unresolved/cyclic aliases cannot
-enter command or script source through expressions; consume those values with shell variables or
-`process.env` instead. Literal and trusted metadata aliases remain available. Whole or computed env
+the effective phase, invocation and step env, including captured aliases in local composites.
+Each env mapping evaluates all its bindings against the inherited environment before assigning them;
+sibling bindings cannot supply alias values. Ordinary phase and explicit step env are emitted as one
+mapping, with step values taking precedence. Setup phase env is evaluated on the `cloud-setup`
+invocation before its internal step env. Captured aliases retain their original provenance when a
+nested step overrides the binding they referenced. Untrusted, secret and unresolved/cyclic aliases
+cannot enter command or script source through expressions; consume those values with shell variables
+or `process.env` instead. Literal and trusted metadata aliases remain available. Whole or computed env
 references cannot establish a safe consuming value and fail this source boundary.

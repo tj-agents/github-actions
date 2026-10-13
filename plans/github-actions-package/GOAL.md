@@ -100,7 +100,7 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. Repair WW-8/9 expression trust, then WW-10 shared setup cache; complete fresh incremental review and exact-head CI.
+1. WW-11/13 are accepted; repair WW-12/14 lifecycle cache/artifact ownership, then complete fresh incremental review and exact-head CI.
 2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
 3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
 
@@ -212,3 +212,17 @@ remains present; verification and unprivileged build cache controls pass for npm
 All 63 required-Node tests passed without skips, AST uniqueness and 72-file generation/freshness
 passed. Parent inspected the renderer and regression diff. Full emitted lint/pinned-kit conformance
 and fresh immutable incremental/security review are next, then exact-head two-OS CI and delivery.
+
+Fresh review completed c2712ec..7048385: four findings in the canonical work order, two HIGH and two
+MEDIUM. Native/API agree on env binding capture/shadow; security confirms runtime output source
+interpolation and OIDC-independent lifecycle cache policy. Parent confirms matrix data flow and pinned
+artifact replacement behavior. Both frozen source-host checks passed. Next serial expression group
+WW-11/13 preserves evaluated binding provenance and requires runtime data through environment variables;
+then lifecycle caches and writer-owned artifact namespace. No push/PR or cloud execution.
+
+WW-11/13 accepted: env bindings resolve against their inherited pre-assignment snapshot and retain
+provenance through nested overrides. Steps, needs and matrix values require consuming-step env before
+shell/script source interpolation. Captured safe values, conditions and variable consumption remain
+supported. Parent inspected canonical renderer/docs/tests; 67 required-Node tests pass without skips,
+AST uniqueness and 72-file generation/freshness pass, and the sole writer stopped all writes.
+WW-12 lifecycle caches and WW-14 artifact namespace are the next separate repair group.
