@@ -46,7 +46,10 @@ or image from the verified `SOURCE_SHA`; it must not rebuild or deploy a mutable
 
 A step has a `name` and exactly one of `run` or `uses`, plus optional `id`, `env`, `if`. Run steps can
 set `working-directory`; the canonical shell is bash and multiline commands receive strict mode.
-Action steps can set `with`. Remote `uses` values are names in the writer's immutable pin catalog,
+Action steps can set `with`. Action input keys are case-insensitive: the writer canonicalizes them
+to lowercase before validation and emission. Duplicate keys that differ only in casing are rejected
+before writing, including in local composites. Input values and caller configuration are preserved.
+Remote `uses` values are names in the writer's immutable pin catalog,
 not provider-owned refs; local refs are `./.github/actions/<name>`. The catalog includes first-party
 checkout, GitHub API, artifact and toolchain actions, plus the vendor-owned pnpm, Terraform and Azure
 sign-in actions. Untrusted expression values belong in step `env`, never command/script bodies.
