@@ -174,3 +174,15 @@ status guards under failed lifecycle/prerequisites, legitimate provider errors a
 AST uniqueness, 72 generated files/freshness and whitespace passed. Preview GitHub identity matches
 its configured environment. The approved never-cancel clarification is the only contract change.
 Next separate group is WW-6, binding peeled tag commit to immutable triggering context.sha.
+
+Final repair acceptance: WW-6 compares peeled tag SHA with immutable context.sha before any CI/artifact
+lookup. Moved lightweight/annotated refs reject a newer green commit without promotion calls or outputs.
+Matching refs and the 16-level bound pass. All 54 required-Node tests pass without skips; AST uniqueness,
+72-file generation/freshness, whitespace and pinned kit 1.2.1 conformance pass. Full emitted variants
+passed actionlint 1.7.11 and zizmor 1.23.1. No cloud or application build ran locally.
+
+Reassessed authored size: renderer 845 lines, total scaffold resources/tests/own CI approximately 2,180
+lines. Added lines repair composition, expression safety and shared preview lifecycle within the same
+complete executable/security boundary; those guards cannot be split into an independently safe writer.
+Azure composition/removal, dotnet boilerplate and later repairs remain separate slices. Fresh incremental
+review selects L4 correctness/API and L2 security; parent delivery is clerical L7. Source writer stopped.

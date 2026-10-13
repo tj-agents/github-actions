@@ -783,26 +783,50 @@ class ReleaseBehaviorTests(unittest.TestCase):
         harness = """
 const input = JSON.parse(process.argv[1]);
 const outputs = {};
-const context = {repo: {owner: 'neutral', repo: 'service'}};
+const calls = [];
+let tagDepth = 0;
+const context = {repo: {owner: 'neutral', repo: 'service'}, sha: input.triggerSha ?? 'verified'};
 const core = {setOutput: (key, value) => { outputs[key] = value; }};
 const github = {rest: {git: {
- getRef: async () => ({data: {object: input.target || {type: 'commit', sha: 'verified'}}}),
- getTag: async () => ({data: {object: {type: 'commit', sha: input.tagSha || 'verified'}}}),
+ getRef: async () => { calls.push('ref'); return {data: {object: input.target || {type: 'commit', sha: 'verified'}}}; },
+ getTag: async () => { calls.push('tag'); tagDepth++; return {data: {object: tagDepth < (input.tagDepth || 1) ? {type: 'tag', sha: `annotation-${tagDepth}`} : {type: 'commit', sha: input.tagSha || 'verified'}}}; },
 }, actions: {
- listWorkflowRuns: async (args) => { if (args.event !== 'push' || args.branch !== 'main' || args.status !== 'success') throw Error('incorrect query'); return {data: {workflow_runs: input.noRun ? [] : [{id: 123, head_sha: input.runSha || 'verified'}]}}; },
+ listWorkflowRuns: async (args) => { calls.push('ci'); if (args.event !== 'push' || args.branch !== 'main' || args.status !== 'success') throw Error('incorrect query'); return {data: {workflow_runs: input.noRun ? [] : [{id: 123, head_sha: input.runSha || 'verified'}]}}; },
  listWorkflowRunArtifacts: () => {},
-}}, paginate: async () => input.artifacts || []};
+}}, paginate: async () => { calls.push('artifacts'); return input.artifacts || []; }};
 (async () => {
 SCRIPT
-})().then(() => process.stdout.write(JSON.stringify(outputs))).catch(e => { process.stderr.write(e.message); process.exitCode = 1; });
+})().then(() => process.stdout.write(JSON.stringify(outputs))).catch(e => { process.stderr.write(JSON.stringify({message: e.message, calls, outputs})); process.exitCode = 1; });
 """.replace("SCRIPT", script)
         return subprocess.run([shutil.which("node"), "-e", harness, json.dumps(case)], env={**os.environ, "TAG_NAME": case.get("tag", "v1.2.3"), "REQUIRE_ARTIFACT": str(case.get("require", False)).lower()}, capture_output=True, text=True)
 
     def test_lightweight_and_annotated_tags_resolve_verified_run(self):
-        for target in ({"type": "commit", "sha": "verified"}, {"type": "tag", "sha": "annotation"}):
-            result = self.assert_release({"target": target})
+        for target in ({"type": "commit", "sha": "triggered"}, {"type": "tag", "sha": "annotation"}):
+            result = self.assert_release({"target": target, "tagSha": "triggered", "runSha": "triggered", "triggerSha": "triggered"})
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual({"source-sha": "verified", "source-run-id": "123", "artifact-id": ""}, json.loads(result.stdout))
+            self.assertEqual({"source-sha": "triggered", "source-run-id": "123", "artifact-id": ""}, json.loads(result.stdout))
+
+    def test_moved_tag_or_rerun_cannot_promote_a_new_green_commit(self):
+        artifact = {"id": 42, "name": "deployment", "expired": False, "digest": "sha256:" + "a" * 64}
+        for target in ({"type": "commit", "sha": "new-green"}, {"type": "tag", "sha": "moved-annotation"}):
+            with self.subTest(target=target):
+                result = self.assert_release({"target": target, "triggerSha": "original-trigger", "tagSha": "new-green", "runSha": "new-green", "require": True, "artifacts": [artifact]})
+                self.assertEqual(1, result.returncode)
+                failure = json.loads(result.stderr)
+                self.assertEqual("release tag must match the immutable triggering commit", failure["message"])
+                self.assertEqual(["ref", "tag"] if target["type"] == "tag" else ["ref"], failure["calls"])
+                self.assertEqual({}, failure["outputs"])
+
+    def test_annotated_tag_nesting_retains_the_sixteen_level_limit(self):
+        target = {"type": "tag", "sha": "annotation"}
+        allowed = self.assert_release({"target": target, "tagDepth": 16})
+        self.assertEqual(0, allowed.returncode, allowed.stderr)
+        rejected = self.assert_release({"target": target, "tagDepth": 17})
+        self.assertEqual(1, rejected.returncode)
+        failure = json.loads(rejected.stderr)
+        self.assertEqual("annotated tag nesting exceeds the supported limit", failure["message"])
+        self.assertEqual(["ref"] + ["tag"] * 16, failure["calls"])
+        self.assertEqual({}, failure["outputs"])
 
     def test_rejects_wrong_commit_missing_ci_and_nonsemver_tag(self):
         for case in ({"runSha": "different"}, {"noRun": True}, {"tag": "v1.2.3-injected"}, {"target": {"type": "tree", "sha": "verified"}}):
