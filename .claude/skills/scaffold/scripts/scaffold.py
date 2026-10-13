@@ -463,6 +463,51 @@ def script_step(name: str, filename: str, env: dict | None = None, step_id: str 
     return result
 
 
+def guarded_steps(job_steps: list[dict], condition: str, *, recovery: bool = False) -> list[dict]:
+    result = copy.deepcopy(job_steps)
+    for step in result:
+        existing = step.get("if", "").strip()
+        if existing.startswith("${{") and existing.endswith("}}"):
+            existing = existing[3:-2].strip()
+        guard = ("!failure()" if recovery else "success()") + " && " + condition
+        if existing:
+            guard += " && (" + existing + ")"
+        step["if"] = expr(guard)
+    return result
+
+
+def provider_steps(val: dict, condition: str, authorization: str, *, recovery: bool = False) -> list[dict]:
+    result = phase_steps(val)
+    for step in result:
+        existing = step.get("if", "").strip()
+        if existing.startswith("${{") and existing.endswith("}}"):
+            existing = existing[3:-2].strip()
+        tokens = expression_tokens(expr(existing))[0]
+        has_status = any(
+            token[0] == "name" and token[1] in {"always", "failure", "success", "cancelled"}
+            and tokens[index + 1:index + 2] == [("symbol", "(")]
+            for index, token in enumerate(tokens)
+        )
+        guard = "(" + authorization + ") && steps.provider-ready.outcome == 'success' && " + condition
+        if not has_status:
+            guard = ("!failure()" if recovery else "success()") + " && " + guard
+        if existing:
+            guard += " && (" + existing + ")"
+        step["if"] = expr(guard)
+    return result
+
+
+def provider_ready_step(authorization: str, *, recovery: bool = False) -> dict:
+    step = {"name": "Confirm provider prerequisites", "id": "provider-ready", "shell": "bash", "run": "true"}
+    return guarded_steps([step], authorization, recovery=recovery)[0]
+
+
+def preview_state_step(number: str, *, recovery: bool = False) -> dict:
+    step = script_step("Resolve the live preview lifecycle", "preview-state.js", {"PREVIEW_NUMBER": number}, "preview-state")
+    step["if"] = expr("!failure()" if recovery else "inputs.preview-number != ''")
+    return step
+
+
 def aggregate(mandatory: list[str], workflow_file: str) -> dict:
     step = {"name": "Check that every required gate succeeded", "shell": "bash", "env": {"GATE_RESULTS": expr("toJSON(needs)"), "WORKFLOW_FILE": workflow_file}, "run": asset("aggregate.sh")}
     result = executing_job("CI complete", [step], needs=mandatory, timeout=5)
@@ -484,7 +529,7 @@ def reusable_call(environment: str, needs: list[str], condition: str, oidc: bool
     if build:
         settings["artifact-id"] = expr("needs.assert-release-commit.outputs.artifact-id") if release else expr("needs.build.outputs.artifact-id")
     condition += " && " + " && ".join("needs." + key + ".result == 'success'" for key in needs)
-    permissions = {"contents": "read", "actions": "read"}
+    permissions = {"contents": "read", "actions": "read", "pull-requests": "read"}
     if oidc:
         permissions["id-token"] = "write"
     return {"name": "Deploy the environment", "needs": needs, "if": expr(condition), "permissions": permissions, "uses": "./.github/workflows/deploy-environment.yml", "with": settings}
@@ -562,7 +607,19 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             preview_condition = cloud_condition + " && " + PREVIEW
             jobs["deploy-preview"] = reusable_call(environments["preview"], deploy_needs + ["plan"], "!cancelled() && " + preview_condition + " && needs.plan.result == 'success'", oidc, build=bool(build), preview=True)
             optional["deploy-preview"] = preview_condition
-            recover = executing_job("Recover cancelled preview infrastructure operations", [checkout(), *toolchains(phases["recover"].get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(phases["recover"])], needs=["plan", "deploy-preview"], cloud=oidc, timeout=10)
+            recover_open = "steps.preview-state.outputs.closed != 'true'"
+            recover_closed = "steps.preview-state.outputs.closed == 'true'"
+            recover_authorized = "steps.preview-state.outcome == 'success' && (steps.preview-state.outputs.closed == 'true' || steps.preview-state.outputs.closed == 'false')"
+            recover_checkout = checkout(expr("steps.preview-state.outputs.closed == 'true' && steps.preview-state.outputs.default-branch || github.sha"))
+            recover_steps = [preview_state_step(expr("github.event.pull_request.number"), recovery=True), *guarded_steps([recover_checkout], "true", recovery=True)]
+            recover_steps.extend(guarded_steps(toolchains(phases["recover"].get("roots", []), files, privileged=oidc), recover_open, recovery=True))
+            recover_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), recover_closed, recovery=True))
+            recover_steps.extend(guarded_steps(setup_steps, "true", recovery=True))
+            recover_steps.append(provider_ready_step(recover_authorized, recovery=True))
+            recover_steps.extend(provider_steps(phases["recover"], recover_open, recover_authorized, recovery=True))
+            recover_steps.extend(provider_steps(phases["destroy"], recover_closed, recover_authorized, recovery=True))
+            recover = executing_job("Recover cancelled preview infrastructure operations", recover_steps, needs=["plan", "deploy-preview"], cloud=oidc, timeout=20)
+            recover["permissions"]["pull-requests"] = "read"
             recover["if"] = expr("cancelled() && " + cloud_condition)
             recover["environment"] = environments["preview"]
             recover["env"] = {"DEPLOY_ENVIRONMENT": environments["preview"], "PREVIEW_NUMBER": expr("github.event.pull_request.number")}
@@ -583,21 +640,31 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
         required.append(optional_gate(jobs, optional))
         jobs["ci-complete"] = aggregate(required, f".github/workflows/{event}.yml")
         trigger = {"pull_request": {"types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"]}} if event == "pr" else {"push": {"branches": ["main"]}}
-        documents[f".github/workflows/{event}.yml"] = workflow("PR" if event == "pr" else "CI", trigger, VERIFY_CONCURRENCY if event == "pr" else "ci", event == "pr", jobs)
+        documents[f".github/workflows/{event}.yml"] = workflow("PR" if event == "pr" else "CI", trigger, VERIFY_CONCURRENCY if event == "pr" else "ci", False, jobs)
     call_inputs = {key: {"description": description, "type": "string", "required": required} for key, description, required in (("environment", "GitHub deployment environment", True), ("preview-number", "Pull request number for a preview", False), ("source-sha", "Verified source commit", True), ("source-run-id", "Run that verified the immutable artifact", True), ("artifact-id", "Immutable deployment artifact ID", False))}
     for key in ("preview-number", "artifact-id"):
         call_inputs[key]["default"] = ""
+    deploying = "steps.preview-state.outputs.closed != 'true'"
+    cleaning = "steps.preview-state.outputs.closed == 'true'"
+    deploy_authorized = "inputs.preview-number == '' || (steps.preview-state.outcome == 'success' && (steps.preview-state.outputs.closed == 'true' || steps.preview-state.outputs.closed == 'false'))"
     directory_step = {"name": "Set the verified artifact directory", "shell": "bash", "run": "printf 'ARTIFACT_DIRECTORY=%s/deployment\\n' \"$RUNNER_TEMP\" >> \"$GITHUB_ENV\""}
     deploy_roots = sorted({root for key in ("deploy", "readiness") for root in phases[key].get("roots", [])})
-    deploy_steps = [checkout(expr("inputs.source-sha")), directory_step, *toolchains(deploy_roots, files, privileged=oidc), *setup_steps]
+    deploy_checkout = checkout(expr("steps.preview-state.outputs.closed == 'true' && steps.preview-state.outputs.default-branch || inputs.source-sha"))
+    deploy_steps = [preview_state_step(expr("inputs.preview-number")), deploy_checkout]
+    deploy_steps.extend(guarded_steps([directory_step, *toolchains(deploy_roots, files, privileged=oidc)], deploying))
+    deploy_steps.extend(guarded_steps(toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), cleaning))
+    deploy_steps.extend(copy.deepcopy(setup_steps))
     if build:
-        deploy_steps.append({"name": "Download the verified deployment artifact", "uses": action("actions/download-artifact"), "with": {"artifact-ids": expr("inputs.artifact-id"), "run-id": expr("inputs.source-run-id"), "github-token": expr("github.token"), "path": expr("runner.temp") + "/deployment", "merge-multiple": True}})
-    deploy_steps.extend(phase_steps(phases["deploy"]))
-    deploy_steps.extend(phase_steps(phases["readiness"]))
+        deploy_steps.extend(guarded_steps([{"name": "Download the verified deployment artifact", "uses": action("actions/download-artifact"), "with": {"artifact-ids": expr("inputs.artifact-id"), "run-id": expr("inputs.source-run-id"), "github-token": expr("github.token"), "path": expr("runner.temp") + "/deployment", "merge-multiple": True}}], deploying))
+    deploy_steps.append(provider_ready_step(deploy_authorized))
+    deploy_steps.extend(provider_steps(phases["deploy"], deploying, deploy_authorized))
+    deploy_steps.extend(provider_steps(phases["readiness"], deploying, deploy_authorized))
+    deploy_steps.extend(provider_steps(phases["destroy"], cleaning, deploy_authorized))
     deploy = executing_job("Deploy and verify the serving environment", deploy_steps, cloud=oidc, timeout=45)
     deploy["permissions"]["actions"] = "read"
-    deploy["environment"] = expr("inputs.environment")
-    deploy["env"] = {"DEPLOY_ENVIRONMENT": expr("inputs.environment"), "PREVIEW_NUMBER": expr("inputs.preview-number"), "SOURCE_RUN_ID": expr("inputs.source-run-id"), "SOURCE_SHA": expr("inputs.source-sha")}
+    deploy["permissions"]["pull-requests"] = "read"
+    deploy["environment"] = expr("inputs.preview-number != '' && '" + environments["preview"] + "' || inputs.environment")
+    deploy["env"] = {"DEPLOY_ENVIRONMENT": expr("inputs.preview-number != '' && '" + environments["preview"] + "' || inputs.environment"), "PREVIEW_NUMBER": expr("inputs.preview-number"), "SOURCE_RUN_ID": expr("inputs.source-run-id"), "SOURCE_SHA": expr("inputs.source-sha")}
     documents[".github/workflows/deploy-environment.yml"] = workflow("Deploy Environment", {"workflow_call": {"inputs": call_inputs}}, expr("inputs.preview-number != '' && format('deploy-pr-{0}', inputs.preview-number) || format('deploy-{0}', inputs.environment)"), False, {"deploy": deploy})
     destroy_inputs = {"preview-number": {"description": "Pull request number to destroy", "required": True, "type": "string"}}
     destroy = executing_job("Destroy the closed preview environment", [checkout(expr("github.event.repository.default_branch")), *toolchains(phases["destroy"].get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(phases["destroy"])], cloud=oidc, timeout=20)

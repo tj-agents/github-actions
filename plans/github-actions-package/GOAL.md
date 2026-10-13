@@ -150,3 +150,27 @@ the tightly coupled assembled-ID and phase-env defects. Parent owns review state
 After each verified repair group: staged deny-list audit and local checkpoint. Then fresh incremental
 review and two-OS exact-head CI before merge. The existing owning-account Node runtime permits executing
 the release-helper regression tests locally; no runtime installation or live cloud commands occurred.
+### Review repair checkpoints - 2026-10-13
+
+WW-1/2 composition repairs are committed at 18e0a3bfb330f728413d51847f0eb1bcc96e8567; WW-3/4
+expression guards and lint-before-plan at 37043119b1c2b2134d7ba8a18d2d9089616d46d7. Both staged
+private deny-list checks passed. All 43 focused tests pass with required Node/no skips, AST test-name
+uniqueness and 69-file freshness. No writer push or PR yet. The immutable full-review judgment remains
+changes-requested until fresh incremental synthesis after all seven dispositions.
+
+WW-5/7 lifecycle repair is in final parent acceptance. Default pending replacement requires preserving
+closed cleanup inside every surviving preview deploy/recovery entrant; no nested lock acquisition or
+unsupported queue field is emitted. First lifecycle suite passed 50 tests. Parent acceptance adds a
+successful prerequisite checkpoint while preserving provider status-function semantics, and keeps
+concrete implementation behavior in scaffold ABI docs. WW-6 moved-tag trigger assertion follows.
+
+The M002 source-insertion incident is retained in the primary shared register and delivered separately
+as docs PR 2, merged e6a0dd160b57f0be68bba7386e13d2366e0dff8f. Independent full/delta review and
+exact-head CI 38462956959 passed; primary base clean. This record-only base movement is reconciled at
+writer preflight without another source synchronization or changing the frozen review identity.
+
+Lifecycle repairs WW-5/7 accepted: 52 required-Node tests pass without skips, including emitted provider
+status guards under failed lifecycle/prerequisites, legitimate provider errors and cancelled recovery.
+AST uniqueness, 72 generated files/freshness and whitespace passed. Preview GitHub identity matches
+its configured environment. The approved never-cancel clarification is the only contract change.
+Next separate group is WW-6, binding peeled tag commit to immutable triggering context.sha.
