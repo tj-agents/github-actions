@@ -205,3 +205,10 @@ aliases and composite overrides. Unsafe, secret or unresolved aliases reject bef
 literal/trusted values and environment-variable consumption remain supported. All 62 required-Node
 tests passed without skips, AST uniqueness and 72-file generation/freshness passed, and parent inspected
 the canonical renderer/docs/tests diff. WW-10 shared setup cache is the next separate source group.
+
+WW-10 accepted: shared provider setup never restores dependency caches, including consumers whose
+build requests OIDC independently of the provider. Metadata-driven SDK/package-manager installation
+remains present; verification and unprivileged build cache controls pass for npm, pnpm and .NET.
+All 63 required-Node tests passed without skips, AST uniqueness and 72-file generation/freshness
+passed. Parent inspected the renderer and regression diff. Full emitted lint/pinned-kit conformance
+and fresh immutable incremental/security review are next, then exact-head two-OS CI and delivery.
