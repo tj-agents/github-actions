@@ -395,6 +395,29 @@ def validate(config: object) -> dict:
     return result
 
 
+def normalize_supplied_sdk_caches(config: dict) -> None:
+    composites = config["provider"]["composites"]
+    pending = [scope for name, scope in config["provider"]["phases"].items() if name != "validate"]
+    if config.get("build", {}).get("oidc", False):
+        pending.append(config["build"])
+    visited = set()
+    while pending:
+        for step in pending.pop()["steps"]:
+            use = step.get("uses", "")
+            if use.startswith("./"):
+                name = use.rsplit("/", 1)[-1]
+                if name not in visited:
+                    visited.add(name)
+                    pending.append(composites[name])
+            elif use.partition("@")[0] in {"actions/setup-node", "actions/setup-dotnet"}:
+                node = use.partition("@")[0] == "actions/setup-node"
+                removed = {"cache", "cache-dependency-path"}
+                if node:
+                    removed.add("package-manager-cache")
+                step["with"] = {key: val for key, val in step.get("with", {}).items() if key.lower() not in removed}
+                step["with"]["package-manager-cache" if node else "cache"] = False
+
+
 def yaml(value: object, indent: int = 0) -> str:
     pad = " " * indent
     lines = []
@@ -637,6 +660,8 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             raise InputError("cloud-setup is reserved for the repeated provider setup envelope")
         if "inputs" in expression_contexts(phases["setup"]):
             raise InputError("provider.setup uses writer env data rather than workflow inputs")
+    normalize_supplied_sdk_caches(resolved)
+    if "setup" in phases:
         documents[".github/actions/cloud-setup/action.yml"] = {"name": "Set up the cloud provider", "description": "Run the provider's repeated sign-in and initialization steps", "runs": {"using": "composite", "steps": [*toolchains(phases["setup"].get("roots", []), files, privileged=True), *phases["setup"]["steps"]]}}
         setup_steps = [{"name": "Set up the cloud provider", "uses": "./.github/actions/cloud-setup"}]
         if "env" in phases["setup"]:

@@ -283,6 +283,104 @@ class RenderingTests(unittest.TestCase):
                             self.assertIs(True, dotnet["with"]["cache"])
                             self.assertEqual("packages.lock.json", dotnet["with"]["cache-dependency-path"])
 
+    def test_supplied_sdk_steps_disable_explicit_and_automatic_lifecycle_caches(self):
+        cache_inputs = (
+            {},
+            {"cache": "npm", "cache-dependency-path": "package-lock.json", "package-manager-cache": True},
+            {"cache": "pnpm", "cache-dependency-path": "pnpm-lock.yaml"},
+            {"cache": "${{ vars.CACHE_MANAGER }}", "cache-dependency-path": "${{ vars.CACHE_PATH }}", "package-manager-cache": "${{ vars.AUTO_CACHE }}"},
+            {"CaChE": "npm", "CACHE-DEPENDENCY-PATH": "package-lock.json", "PACKAGE-MANAGER-CACHE": True},
+            {"cache": "npm", "CACHE": "pnpm", "package-manager-cache": True, "PACKAGE-MANAGER-CACHE": "${{ vars.AUTO_CACHE }}"},
+        )
+        for supplied in cache_inputs:
+            for oidc in (False, True):
+                with self.subTest(supplied=supplied, oidc=oidc):
+                    config = fixture()
+                    config["provider"]["oidc"] = oidc
+                    for phase in ("setup", "plan", "deploy", "readiness", "destroy", "recover"):
+                        config["provider"]["phases"][phase] = {"steps": [
+                            {"name": phase + " supplied Node", "uses": "actions/setup-node", "with": {"node-version": "24.x", "check-latest": False, **supplied}},
+                            {"name": phase + " supplied .NET", "uses": "actions/setup-dotnet", "with": {"dotnet-version": "10.0.x", "source-url": "https://packages.example.test", **{key: val for key, val in supplied.items() if key.lower() != "package-manager-cache"}}},
+                        ]}
+                    original = copy.deepcopy(config)
+                    _, docs = scaffold.render_documents(config)
+                    emitted = [step for doc in docs.values() for steps in ([job["steps"] for job in doc.get("jobs", {}).values() if "steps" in job] + ([doc["runs"]["steps"]] if "runs" in doc else [])) for step in steps]
+                    for phase in ("setup", "plan", "deploy", "readiness", "destroy", "recover"):
+                        nodes = [step for step in emitted if step["name"] == phase + " supplied Node"]
+                        dotnets = [step for step in emitted if step["name"] == phase + " supplied .NET"]
+                        self.assertTrue(nodes)
+                        self.assertTrue(dotnets)
+                        for node in nodes:
+                            self.assertEqual({"node-version": "24.x", "check-latest": False, "package-manager-cache": False}, node["with"])
+                        for dotnet in dotnets:
+                            self.assertEqual({"dotnet-version": "10.0.x", "source-url": "https://packages.example.test", "cache": False}, dotnet["with"])
+                    self.assertEqual(original, config)
+
+    def test_restrictive_callers_disable_sdk_caches_in_nested_shared_composites(self):
+        for privileged_build in (False, True):
+            with self.subTest(privileged_build=privileged_build):
+                config = fixture()
+                config["provider"]["oidc"] = False
+                config["build"]["oidc"] = privileged_build
+                sdk_steps = [
+                    {"name": "Shared supplied Node", "uses": "actions/setup-node", "with": {"node-version-file": ".nvmrc", "CACHE": "npm", "CACHE-DEPENDENCY-PATH": "package-lock.json", "PACKAGE-MANAGER-CACHE": True}},
+                    {"name": "Shared supplied .NET", "uses": "actions/setup-dotnet", "with": {"global-json-file": "global.json", "CaChE": "${{ vars.CACHE_ENABLED }}", "CACHE-DEPENDENCY-PATH": "packages.lock.json"}},
+                ]
+                config["provider"]["composites"] = {
+                    "sdk": {"description": "Set up shared SDKs", "steps": sdk_steps},
+                    "nested-sdk": {"description": "Invoke shared SDKs", "steps": [{"name": "Invoke SDK composite", "uses": "./.github/actions/sdk"}]},
+                    "ordinary-sdk": {"description": "Set up ordinary SDKs", "steps": copy.deepcopy(sdk_steps)},
+                }
+                config["verify"]["unit"]["steps"].extend([{"name": "Invoke shared SDKs", "uses": "./.github/actions/nested-sdk"}, {"name": "Invoke ordinary SDKs", "uses": "./.github/actions/ordinary-sdk"}])
+                config["build"]["steps"].append({"name": "Build SDKs", "uses": "./.github/actions/nested-sdk"})
+                original = copy.deepcopy(config)
+                _, docs = scaffold.render_documents(config)
+                shared = docs[".github/actions/sdk/action.yml"]["runs"]["steps"]
+                if privileged_build:
+                    self.assertEqual({"node-version-file": ".nvmrc", "package-manager-cache": False}, shared[0]["with"])
+                    self.assertEqual({"global-json-file": "global.json", "cache": False}, shared[1]["with"])
+                else:
+                    self.assertEqual(sdk_steps[0]["with"], shared[0]["with"])
+                    self.assertEqual(sdk_steps[1]["with"], shared[1]["with"])
+                ordinary = docs[".github/actions/ordinary-sdk/action.yml"]["runs"]["steps"]
+                for supplied, emitted in zip(sdk_steps, ordinary):
+                    self.assertEqual(supplied["with"], emitted["with"])
+                self.assertEqual(original, config)
+                config["provider"]["phases"]["setup"] = {"steps": [{"name": "Initialize shared SDKs", "uses": "./.github/actions/nested-sdk"}]}
+                _, docs = scaffold.render_documents(config)
+                shared = docs[".github/actions/sdk/action.yml"]["runs"]["steps"]
+                self.assertEqual({"node-version-file": ".nvmrc", "package-manager-cache": False}, shared[0]["with"])
+                self.assertEqual({"global-json-file": "global.json", "cache": False}, shared[1]["with"])
+
+    def test_direct_privileged_build_sdk_policy_preserves_ordinary_sdk_inputs(self):
+        for privileged_build in (False, True):
+            with self.subTest(privileged_build=privileged_build):
+                config = fixture()
+                config["provider"]["oidc"] = False
+                config["build"]["oidc"] = privileged_build
+                sdk_steps = [
+                    {"name": "Supplied Node", "uses": "actions/setup-node", "with": {"node-version": "24.x", "cache": "${{ vars.CACHE_MANAGER }}", "cache-dependency-path": "package-lock.json", "package-manager-cache": True}},
+                    {"name": "Supplied .NET", "uses": "actions/setup-dotnet", "with": {"dotnet-version": "10.0.x", "cache": True, "cache-dependency-path": "packages.lock.json"}},
+                    {"name": "Default supplied Node", "uses": "actions/setup-node"},
+                ]
+                config["build"]["steps"].extend(copy.deepcopy(sdk_steps))
+                config["verify"]["unit"]["steps"].extend(copy.deepcopy(sdk_steps))
+                config["provider"]["phases"]["validate"]["steps"].extend(copy.deepcopy(sdk_steps))
+                original = copy.deepcopy(config)
+                _, docs = scaffold.render_documents(config)
+                for event in ("pr", "ci"):
+                    jobs = docs[f".github/workflows/{event}.yml"]["jobs"]
+                    for scope in ("verify-unit", "validate", "build"):
+                        supplied = {step["name"]: step for step in jobs[scope]["steps"] if step["name"] in {item["name"] for item in sdk_steps}}
+                        if scope == "build" and privileged_build:
+                            self.assertEqual({"node-version": "24.x", "package-manager-cache": False}, supplied["Supplied Node"]["with"])
+                            self.assertEqual({"dotnet-version": "10.0.x", "cache": False}, supplied["Supplied .NET"]["with"])
+                            self.assertEqual({"package-manager-cache": False}, supplied["Default supplied Node"]["with"])
+                        else:
+                            for step in sdk_steps:
+                                self.assertEqual(step.get("with"), supplied[step["name"]].get("with"))
+                self.assertEqual(original, config)
+
     def test_cloud_phase_roots_install_declared_toolchains(self):
         config = fixture()
         config["provider"]["oidc"] = True
@@ -679,11 +777,15 @@ class ValidationTests(unittest.TestCase):
 
     def test_setup_uses_writer_env_and_rejects_all_inputs_context_spellings(self):
         for expression in ("${{ inputs.target }}", "${{ inputs['target'] }}", "${{ InPuTs [ 'target' ] }}", "${{ inputs }}", "${{ toJSON(INPUTS) }}"):
-            with self.subTest(expression=expression):
-                config = fixture()
-                config["provider"]["phases"]["setup"] = {"steps": [{"name": "Initialize provider", "run": "echo setup", "env": {"TARGET": expression}}]}
-                with self.assertRaisesRegex(scaffold.InputError, "provider.setup uses writer env data"):
-                    scaffold.render(config)
+            for destination in ("env", "node-cache", "dotnet-cache"):
+                with self.subTest(expression=expression, destination=destination):
+                    config = fixture()
+                    step = {"name": "Initialize provider", "run": "echo setup", "env": {"TARGET": expression}}
+                    if destination != "env":
+                        step = {"name": "Initialize SDK", "uses": "actions/setup-node" if destination == "node-cache" else "actions/setup-dotnet", "with": {"cache": expression}}
+                    config["provider"]["phases"]["setup"] = {"steps": [step]}
+                    with self.assertRaisesRegex(scaffold.InputError, "provider.setup uses writer env data"):
+                        scaffold.render(config)
         config = fixture()
         config["provider"]["phases"]["setup"] = {"env": {"LABEL": "${{ 'inputs.target' }}", "PLAIN": "inputs.target", "TARGET": "${{ env.DEPLOY_ENVIRONMENT }}"}, "steps": [{"name": "Read inputs.target label", "run": "echo inputs.target"}]}
         scaffold.render(config)

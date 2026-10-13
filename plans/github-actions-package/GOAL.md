@@ -234,3 +234,21 @@ because static ownership cannot be proved. Literal diagnostic names and the acti
 supported. Parent inspected renderer/docs/tests; 71 required-Node tests pass without skips, AST
 uniqueness and 72-file generation/freshness pass. All sole-writer command handles completed.
 No additional scope is added before fresh independent review and exact-head CI.
+
+Fresh review completed at a420e41: native-general/API found no new defects; full-trunk security and
+parent pure-render proof retain WW-15 (MEDIUM), supplied SDK cache inputs copied into lifecycle jobs.
+Both source-host checks pass; completed review/security watermark now a420e41. Shared composites must
+honor their strongest caller cache requirement. Serial source repair is next, followed by a fresh
+independent delta and exact-head CI. Original executable writer boundary remains; no Azure/0b scope.
+
+WW-15 accepted: supplied Node/.NET cache settings are normalized on lifecycle and privileged-build
+paths, recursively including shared local composites. Explicit and automatic caches are disabled while
+SDK versions and other inputs remain intact. Normalization follows validation, preserving the setup
+inputs-context rejection. Ordinary verification/validation/unprivileged controls and caller immutability
+pass. Parent inspected source/docs/tests; all 74 required-Node tests/no skips, AST uniqueness and
+72-file generation/freshness pass. All writer handles stopped before parent acceptance.
+
+Azure compatibility preparation resolves truthful absent app verification: accept verify:{} for profiles
+with no app suite, while nonempty verification still requires unit. This changes data absence support,
+adds no scaffold switch and avoids a fabricated Terraform unit job. It is the next small API checkpoint
+within the same complete writer boundary before fresh independent review and exact-head CI.
