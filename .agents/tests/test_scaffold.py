@@ -410,6 +410,47 @@ class RenderingTests(unittest.TestCase):
             self.assertEqual(files[path], without_release[path])
         self.assertEqual({"prod-release": False}, json.loads(without_release[".scaffold.github-actions.json"])["options"])
 
+    def test_empty_verification_preserves_infrastructure_and_release_gates(self):
+        for build in (False, True):
+            for prod_release in (False, True):
+                with self.subTest(build=build, prod_release=prod_release):
+                    config = fixture()
+                    config["verify"] = {}
+                    config["prod-release"] = prod_release
+                    if not build:
+                        del config["build"]
+                    original = copy.deepcopy(config)
+                    _, docs = scaffold.render_documents(config)
+                    for event in ("pr", "ci"):
+                        jobs = docs[f".github/workflows/{event}.yml"]["jobs"]
+                        self.assertFalse(any(name.startswith("verify-") for name in jobs))
+                        mandatory = ["lint", "validate"] + (["build"] if build else []) + ["cloud-gates"]
+                        self.assertEqual(mandatory, jobs["ci-complete"]["needs"])
+                        self.assertEqual("always()", jobs["ci-complete"]["if"])
+                        self.assertEqual(["lint", "validate"], jobs["plan"]["needs"] if event == "pr" else jobs["deploy-ci"]["needs"][:2])
+                        deployment = jobs["deploy-preview" if event == "pr" else "deploy-ci"]
+                        self.assertEqual(["lint", "validate"] + (["build"] if build else []) + (["plan"] if event == "pr" else []), deployment["needs"])
+                        for dependency in deployment["needs"]:
+                            self.assertIn("needs." + dependency + ".result == 'success'", deployment["if"])
+                        self.assertEqual(["plan", "deploy-preview"] if event == "pr" else ["deploy-ci"], jobs["cloud-gates"]["needs"])
+                        if build:
+                            self.assertEqual(["lint", "validate"], jobs["build"]["needs"])
+                            self.assertEqual("${{ needs.build.outputs.artifact-id }}", deployment["with"]["artifact-id"])
+                        else:
+                            self.assertNotIn("build", jobs)
+                            self.assertNotIn("artifact-id", deployment["with"])
+                    deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+                    self.assertEqual(build, any("download-artifact" in step.get("uses", "") for step in deploy["steps"]))
+                    self.assertEqual(prod_release, ".github/workflows/prod.yml" in docs)
+                    if prod_release:
+                        release = docs[".github/workflows/prod.yml"]["jobs"]
+                        self.assertEqual(["assert-release-commit"], release["deploy-prod"]["needs"])
+                        self.assertEqual("true" if build else "false", release["assert-release-commit"]["steps"][0]["env"]["REQUIRE_ARTIFACT"])
+                        self.assertEqual("${{ needs.assert-release-commit.outputs.source-sha }}", release["deploy-prod"]["with"]["source-sha"])
+                        if build:
+                            self.assertEqual("${{ needs.assert-release-commit.outputs.artifact-id }}", release["deploy-prod"]["with"]["artifact-id"])
+                    self.assertEqual(original, config)
+
     def test_provider_does_not_need_a_workload_artifact(self):
         config = fixture()
         del config["build"]
@@ -968,6 +1009,19 @@ class ValidationTests(unittest.TestCase):
                 with self.assertRaises(scaffold.InputError):
                     scaffold.render(config)
 
+    def test_verification_requires_a_valid_map_and_unit_for_nonempty_suites(self):
+        invalid = (None, [], "", True, {"integration": fixture()["verify"]["integration"]}, {"smoke": fixture()["verify"]["unit"]}, {"unit": {"steps": []}})
+        for verify in invalid:
+            with self.subTest(verify=verify):
+                config = fixture()
+                config["verify"] = verify
+                with self.assertRaises(scaffold.InputError):
+                    scaffold.render(config)
+        config = fixture()
+        del config["verify"]
+        with self.assertRaises(scaffold.InputError):
+            scaffold.render(config)
+
     def test_missing_toolchain_metadata_and_invalid_repository_json(self):
         for metadata in ({"package.json": "{}"}, {"global.json": "bad-json"}, {"global.json": '{"sdk":{"version":42}}'}, {"package.json": '{"engines":{"node":"24"},"packageManager":"pnpm@latest"}'}, {"../outside": "x"}):
             with self.subTest(metadata=metadata), self.assertRaises(scaffold.InputError):
@@ -1011,6 +1065,44 @@ class AtomicCliTests(unittest.TestCase):
         files = json.loads(result.stdout)
         self.assertNotIn(".github/workflows/prod.yml", files)
         self.assertIn("global-json-file", files[".github/workflows/pr.yml"])
+
+    def test_empty_verification_cli_render_and_new_succeed(self):
+        for build in (False, True):
+            for prod_release in (False, True):
+                with self.subTest(build=build, prod_release=prod_release):
+                    config = fixture()
+                    config["verify"] = {}
+                    config["prod-release"] = prod_release
+                    if not build:
+                        del config["build"]
+                    self.config.write_text(json.dumps(config), encoding="utf-8")
+                    rendered = self.run_cli("render", "--config", str(self.config))
+                    self.assertEqual(0, rendered.returncode, rendered.stderr)
+                    files = json.loads(rendered.stdout)
+                    self.assertNotIn('"verify-unit":', files[".github/workflows/pr.yml"])
+                    self.assertEqual(prod_release, ".github/workflows/prod.yml" in files)
+                    project = self.project / f"build-{build}-release-{prod_release}"
+                    project.mkdir()
+                    created = self.run_cli("new", "--config", str(self.config), "--project", str(project))
+                    self.assertEqual(0, created.returncode, created.stderr)
+                    self.assertEqual(set(files), {path.relative_to(project).as_posix() for path in project.rglob("*") if path.is_file()})
+                    self.assertEqual(files[".github/workflows/ci.yml"], (project / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+
+    def test_invalid_verification_cli_writes_nothing(self):
+        for verify in (None, [], "", {"integration": fixture()["verify"]["integration"]}, {"unknown": fixture()["verify"]["unit"]}, {"unit": {"steps": []}}):
+            with self.subTest(verify=verify):
+                config = fixture()
+                config["verify"] = verify
+                self.config.write_text(json.dumps(config), encoding="utf-8")
+                result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+                self.assertEqual(2, result.returncode)
+                self.assertEqual([], list(self.project.iterdir()))
+        config = fixture()
+        del config["verify"]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+        self.assertEqual(2, result.returncode)
+        self.assertEqual([], list(self.project.iterdir()))
 
     def test_write_and_collision_are_no_overwrite(self):
         result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
