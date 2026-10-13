@@ -98,3 +98,11 @@ provider step fails. Each operation branch also requires an authorized lifecycle
 successful checkout/toolchain/setup/artifact prerequisite checkpoint. A provider condition cannot
 bypass failed state lookup or failed prerequisites. Recovery's default step conditions tolerate
 cancellation; explicit provider status conditions keep their requested semantics.
+
+Step `if` accepts bare or wrapped expressions; both forms receive the same context validation before
+operation guards are composed. Command and GitHub-script interpolation through `env` is checked against
+the effective phase, invocation and step env, including transitive aliases in local composites.
+Explicit step values override inherited values. Untrusted, secret and unresolved/cyclic aliases cannot
+enter command or script source through expressions; consume those values with shell variables or
+`process.env` instead. Literal and trusted metadata aliases remain available. Whole or computed env
+references cannot establish a safe consuming value and fail this source boundary.

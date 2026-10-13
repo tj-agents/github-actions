@@ -100,7 +100,7 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. Repair the seven completed independent-review findings, then complete fresh incremental review and exact-head CI.
+1. Repair WW-8/9 expression trust, then WW-10 shared setup cache; complete fresh incremental review and exact-head CI.
 2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
 3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
 
@@ -186,3 +186,22 @@ lines. Added lines repair composition, expression safety and shared preview life
 complete executable/security boundary; those guards cannot be split into an independently safe writer.
 Azure composition/removal, dotnet boilerplate and later repairs remain separate slices. Fresh incremental
 review selects L4 correctness/API and L2 security; parent delivery is clerical L7. Source writer stopped.
+
+Fresh review froze 8cf9a69f297e07d78358e7a418c43c322cb31e1d..c2712ec4c5f0805a11e0fd02df76cbed175291f9
+(20 changed paths). API-contract and parent native fallback confirm one bare-step-condition context
+validation defect; the full-trunk security lens remains active at the same head. Canonical work order
+is in-progress/pending and preserves the previous watermark. No source remediation or PR publication
+starts before this pass's synthesis. Both frozen exports remain available for the active review.
+
+Incremental pass completed at c2712ec with WW-8 (MEDIUM bare-condition validation), WW-9 (HIGH
+env-alias script injection), WW-10 (HIGH shared setup cache in independently privileged build).
+Parent reproduced all three using only frozen pure rendering. Speculative cancelled-prerequisite
+reachability was withdrawn and excluded. Source-host coverage passed; completed pass/watermarks
+recorded in the canonical work order. Serial address-review starts with coupled expression WW-8/9.
+
+WW-8/9 accepted: bare and wrapped conditions use identical quote-aware validation; command/script
+aliases are resolved through effective phase, invocation and step environments, including transitive
+aliases and composite overrides. Unsafe, secret or unresolved aliases reject before any write;
+literal/trusted values and environment-variable consumption remain supported. All 62 required-Node
+tests passed without skips, AST uniqueness and 72-file generation/freshness passed, and parent inspected
+the canonical renderer/docs/tests diff. WW-10 shared setup cache is the next separate source group.
