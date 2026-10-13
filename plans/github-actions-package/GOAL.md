@@ -261,3 +261,13 @@ AST uniqueness, 72-file generation/freshness and whitespace passed. Sole-writer 
 This small absence case and WW-15 stay within the existing complete writer API/security boundary;
 Azure composition/removal and dotnet boilerplate remain separate delivery slices. Next phase is fresh
 independent L4 correctness/API and L2 security review, followed by exact-head two-OS CI and delivery.
+Fresh review at 6531e5c completed with two action-input casing findings (WW-16 HIGH script-source checks; WW-17 MEDIUM artifact ownership). Native/API clear; parent frozen rendering reproduces both. PR3 exact-head Workflow Writer38479739191 and ci38479739900 passed both operating systems/hosts. One L4 writer repairs canonical input keys and duplicate collisions serially; fresh incremental review and exact-head CI follow. Draft PR retains the same slice.
+
+WW-16/17 accepted: supplied action inputs are canonicalized before all policy validation and emission;
+case-insensitive duplicate keys reject deterministically. Script direct/alias and reserved artifact guards
+cover direct/nested composite paths; safe environment consumption, diagnostic uploads, SDK/version inputs
+and caller immutability remain supported. Parent inspected the eight-line normalization plus docs/tests;
+83 required-Node tests/no skips, AST uniqueness, 72-file generation/freshness and whitespace passed.
+All implementation handles stopped before acceptance. This coupled policy-input repair remains inside
+the same writer boundary. Next: fresh immutable incremental ordinary/API/security review, replacement
+exact-head CI on existing draft PR3, then authorized merge and Azure adapter slice.

@@ -239,7 +239,15 @@ def scalar_map(value: object, where: str, environment: bool = False) -> dict:
             raise InputError(f"{where}: expected scalar values with string keys")
         if environment and not ENV_NAME.fullmatch(key):
             raise InputError(f"{where}.{key}: expected SCREAMING_SNAKE")
-    return copy.deepcopy(value)
+    if environment:
+        return copy.deepcopy(value)
+    result = {}
+    for key, val in value.items():
+        canonical = key.lower()
+        if canonical in result:
+            raise InputError(f"{where}: duplicate action input {canonical}")
+        result[canonical] = val
+    return result
 
 
 def steps(value: object, where: str, composite: bool = False) -> list[dict]:

@@ -290,7 +290,6 @@ class RenderingTests(unittest.TestCase):
             {"cache": "pnpm", "cache-dependency-path": "pnpm-lock.yaml"},
             {"cache": "${{ vars.CACHE_MANAGER }}", "cache-dependency-path": "${{ vars.CACHE_PATH }}", "package-manager-cache": "${{ vars.AUTO_CACHE }}"},
             {"CaChE": "npm", "CACHE-DEPENDENCY-PATH": "package-lock.json", "PACKAGE-MANAGER-CACHE": True},
-            {"cache": "npm", "CACHE": "pnpm", "package-manager-cache": True, "PACKAGE-MANAGER-CACHE": "${{ vars.AUTO_CACHE }}"},
         )
         for supplied in cache_inputs:
             for oidc in (False, True):
@@ -340,11 +339,11 @@ class RenderingTests(unittest.TestCase):
                     self.assertEqual({"node-version-file": ".nvmrc", "package-manager-cache": False}, shared[0]["with"])
                     self.assertEqual({"global-json-file": "global.json", "cache": False}, shared[1]["with"])
                 else:
-                    self.assertEqual(sdk_steps[0]["with"], shared[0]["with"])
-                    self.assertEqual(sdk_steps[1]["with"], shared[1]["with"])
+                    self.assertEqual({key.lower(): val for key, val in sdk_steps[0]["with"].items()}, shared[0]["with"])
+                    self.assertEqual({key.lower(): val for key, val in sdk_steps[1]["with"].items()}, shared[1]["with"])
                 ordinary = docs[".github/actions/ordinary-sdk/action.yml"]["runs"]["steps"]
                 for supplied, emitted in zip(sdk_steps, ordinary):
-                    self.assertEqual(supplied["with"], emitted["with"])
+                    self.assertEqual({key.lower(): val for key, val in supplied["with"].items()}, emitted["with"])
                 self.assertEqual(original, config)
                 config["provider"]["phases"]["setup"] = {"steps": [{"name": "Initialize shared SDKs", "uses": "./.github/actions/nested-sdk"}]}
                 _, docs = scaffold.render_documents(config)
@@ -921,6 +920,86 @@ class ValidationTests(unittest.TestCase):
                 config["provider"]["phases"]["deploy"]["env"] = {"LABEL": "${{ 'secrets.PASSWORD' }}", "PLAIN": "secrets.PASSWORD"}
                 scaffold.render(config)
 
+    def test_script_input_case_aliases_cannot_bypass_source_validation(self):
+        for key in ("SCRIPT", "sCrIpT"):
+            for value in ("${{ github.event.pull_request.title }}", "${{ env.ALIAS }}", "${{ env.MISSING }}"):
+                for nested in (False, True):
+                    with self.subTest(key=key, value=value, nested=nested):
+                        config = fixture()
+                        step = {"name": "Read title", "uses": "actions/github-script", "with": {key: "console.log('" + value + "');"}}
+                        if nested:
+                            step["env"] = {"TITLE": "literal"}
+                            config["provider"]["composites"] = {
+                                "read-title": {"description": "Read title", "steps": [step]},
+                                "capture-title": {"description": "Capture title", "steps": [{"name": "Capture title alias", "uses": "./.github/actions/read-title", "env": {"ALIAS": "${{ env.TITLE }}"}}]},
+                            }
+                            config["verify"]["unit"]["steps"] = [{"name": "Call title composite", "uses": "./.github/actions/capture-title", "env": {"TITLE": "${{ github.event.pull_request.title }}"}}]
+                        else:
+                            step["env"] = {"ALIAS": "${{ github.event.pull_request.title }}"}
+                            config["verify"]["unit"]["steps"] = [step]
+                        original = copy.deepcopy(config)
+                        with self.assertRaises(scaffold.InputError):
+                            scaffold.render(config)
+                        self.assertEqual(original, config)
+
+    def test_upload_input_case_aliases_cannot_bypass_artifact_ownership(self):
+        for extra in ({"NAME": "deployment"}, {"NaMe": " deployment "}, {"NAME": "${{ vars.ARTIFACT_NAME }}"}, {"OVERWRITE": True}, {"OvErWrItE": "${{ true }}"}, {"NAME": "diagnostics", "ARCHIVE": False, "OVERWRITE": "true"}):
+            for nested in (False, True):
+                with self.subTest(extra=extra, nested=nested):
+                    config = fixture()
+                    step = {"name": "Upload diagnostic", "uses": "actions/upload-artifact", "with": {"PATH": "diagnostic", "IF-NO-FILES-FOUND": "warn", "RETENTION-DAYS": 7, **extra}}
+                    if nested:
+                        config["provider"]["composites"] = {
+                            "upload-diagnostic": {"description": "Upload diagnostic", "steps": [step]},
+                            "forward-diagnostic": {"description": "Forward diagnostic", "steps": [{"name": "Forward upload", "uses": "./.github/actions/upload-diagnostic"}]},
+                        }
+                        config["provider"]["phases"]["deploy"]["steps"].append({"name": "Invoke nested upload", "uses": "./.github/actions/forward-diagnostic"})
+                    else:
+                        config["build"]["steps"].append(step)
+                    with self.assertRaisesRegex(scaffold.InputError, "cannot overwrite artifacts|reserved deployment"):
+                        scaffold.render(config)
+
+    def test_case_duplicate_action_inputs_fail_deterministically(self):
+        cases = (
+            ("actions/github-script", {"SCRIPT": "return true;", "script": "return false;"}, "script"),
+            ("actions/upload-artifact", {"NAME": "diagnostic", "name": "report"}, "name"),
+            ("actions/upload-artifact", {"OVERWRITE": False, "overwrite": False}, "overwrite"),
+            ("actions/setup-node", {"cache": "npm", "CACHE": "pnpm"}, "cache"),
+            ("actions/setup-node", {"package-manager-cache": False, "PACKAGE-MANAGER-CACHE": True}, "package-manager-cache"),
+            ("actions/setup-dotnet", {"CACHE": True, "cache": False}, "cache"),
+        )
+        for action, settings, canonical in cases:
+            for reverse in (False, True):
+                for nested in (False, True):
+                    with self.subTest(action=action, canonical=canonical, reverse=reverse, nested=nested):
+                        config = fixture()
+                        step = {"name": "Duplicate action input", "uses": action, "with": dict(reversed(list(settings.items()))) if reverse else settings}
+                        if nested:
+                            config["provider"]["composites"] = {"duplicate-input": {"description": "Duplicate input", "steps": [step]}}
+                            config["provider"]["phases"]["setup"] = {"steps": [{"name": "Call duplicate input", "uses": "./.github/actions/duplicate-input"}]}
+                        else:
+                            config["verify"]["unit"]["steps"] = [step]
+                        with self.assertRaisesRegex(scaffold.InputError, "duplicate action input " + canonical + "$"):
+                            scaffold.render(config)
+
+    def test_safe_action_input_case_aliases_emit_canonical_keys_without_mutation(self):
+        config = fixture()
+        scripts = [
+            {"name": "Consume title safely", "uses": "actions/github-script", "env": {"TITLE": "${{ github.event.pull_request.title }}"}, "with": {"ScRiPt": "console.log(process.env.TITLE);", "RESULT-ENCODING": "string"}},
+            {"name": "Read literal expression", "uses": "actions/github-script", "with": {"SCRIPT": "return ${{ 'github.event env.MISSING' }};"}},
+        ]
+        diagnostic = {"name": "Upload independent diagnostics", "uses": "actions/upload-artifact", "with": {"NAME": "diagnostics", "PATH": "diagnostic", "IF-NO-FILES-FOUND": "warn", "RETENTION-DAYS": 7, "OVERWRITE": False}}
+        sdk = {"name": "Select Node version", "uses": "actions/setup-node", "with": {"NODE-VERSION": "24.x", "CHECK-LATEST": False, "CACHE": "npm"}}
+        config["provider"]["composites"] = {"safe-inputs": {"description": "Safe inputs", "steps": [*scripts, diagnostic, sdk]}}
+        config["verify"]["unit"]["steps"] = [*copy.deepcopy(scripts), copy.deepcopy(diagnostic), copy.deepcopy(sdk), {"name": "Call safe inputs", "uses": "./.github/actions/safe-inputs"}]
+        original = copy.deepcopy(config)
+        _, docs = scaffold.render_documents(config)
+        composite = docs[".github/actions/safe-inputs/action.yml"]["runs"]["steps"]
+        for emitted in (composite, docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]["steps"][1:-1]):
+            for supplied, step in zip([*scripts, diagnostic, sdk], emitted):
+                self.assertEqual({key.lower(): val for key, val in supplied["with"].items()}, step["with"])
+        self.assertEqual(original, config)
+
     def test_supplied_artifact_uploads_cannot_replace_the_writer_artifact(self):
         settings = [
             {"name": "deployment"}, {"name": "  deployment  "}, {"name": "\tdeployment\n"},
@@ -1130,6 +1209,36 @@ class AtomicCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("repeated step id artifact", result.stderr)
         self.assertEqual([], list(self.project.iterdir()))
+
+    def test_action_input_case_validation_exits_two_before_writing(self):
+        cases = (
+            ("actions/github-script", {"SCRIPT": "console.log('${{ github.event.pull_request.title }}');"}),
+            ("actions/github-script", {"ScRiPt": "console.log('${{ env.MISSING }}');"}),
+            ("actions/github-script", {"SCRIPT": "return true;", "script": "return false;"}),
+            ("actions/upload-artifact", {"NAME": "deployment"}),
+            ("actions/upload-artifact", {"NAME": "${{ vars.ARTIFACT_NAME }}"}),
+            ("actions/upload-artifact", {"NAME": "diagnostics", "OVERWRITE": True}),
+            ("actions/upload-artifact", {"NAME": "diagnostics", "name": "report"}),
+            ("actions/setup-node", {"CACHE": "npm", "cache": "pnpm"}),
+        )
+        for action, settings in cases:
+            for nested in (False, True):
+                with self.subTest(action=action, settings=settings, nested=nested):
+                    config = fixture()
+                    inputs = {"if-no-files-found": "warn", "retention-days": 7, **settings} if action == "actions/upload-artifact" else settings
+                    step = {"name": "Read supplied inputs", "uses": action, "with": inputs}
+                    if nested:
+                        config["provider"]["composites"] = {
+                            "read-inputs": {"description": "Read inputs", "steps": [step]},
+                            "forward-inputs": {"description": "Forward inputs", "steps": [{"name": "Forward supplied inputs", "uses": "./.github/actions/read-inputs"}]},
+                        }
+                        config["verify"]["unit"]["steps"] = [{"name": "Call nested inputs", "uses": "./.github/actions/forward-inputs"}]
+                    else:
+                        config["verify"]["unit"]["steps"] = [step]
+                    self.config.write_text(json.dumps(config), encoding="utf-8")
+                    result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+                    self.assertEqual(2, result.returncode)
+                    self.assertEqual([], list(self.project.iterdir()))
 
     def test_artifact_ownership_validation_exits_two_before_writing(self):
         for extra in ({"name": "deployment"}, {"name": "${{ vars.ARTIFACT_NAME }}"}, {"name": "diagnostics", "overwrite": "${{ true }}"}):
