@@ -31,6 +31,94 @@ def body(name):
 
 
 class RenderingTests(unittest.TestCase):
+    def test_distinct_joined_step_ids_and_references_are_preserved(self):
+        config = fixture()
+        config["build"]["steps"][0]["id"] = "package"
+        phases = config["provider"]["phases"]
+        phases["deploy"]["steps"][0]["id"] = "deployed"
+        phases["readiness"]["steps"][0].update({"id": "serving", "env": {"REVISION": "${{ steps.deployed.outputs.revision }}"}})
+        _, docs = scaffold.render_documents(config)
+        deploy = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+        self.assertEqual(["deployed", "serving"], [step["id"] for step in deploy["steps"] if "id" in step])
+        self.assertEqual("${{ steps.deployed.outputs.revision }}", deploy["steps"][-1]["env"]["REVISION"])
+        for event in ("pr", "ci"):
+            build = docs[f".github/workflows/{event}.yml"]["jobs"]["build"]
+            self.assertEqual(["package", "artifact"], [step["id"] for step in build["steps"] if "id" in step])
+            self.assertEqual("${{ steps.artifact.outputs.artifact-id }}", build["outputs"]["artifact-id"])
+
+    def test_setup_and_plan_env_have_separate_scopes_and_step_override(self):
+        config = fixture()
+        phases = config["provider"]["phases"]
+        phases["setup"] = {"env": {"MODE": "setup", "SETUP_ONLY": "true"}, "steps": [{"name": "Initialize the provider", "run": "echo setup"}, {"name": "Select setup mode", "run": "echo override", "env": {"MODE": "setup-step"}}]}
+        phases["plan"]["env"] = {"MODE": "plan", "PLAN_ONLY": "true"}
+        phases["plan"]["steps"].append({"name": "Inspect plan", "uses": "actions/github-script", "with": {"script": "return true;"}, "env": {"MODE": "plan-step"}})
+        original = copy.deepcopy(config)
+        _, docs = scaffold.render_documents(config)
+        plan = docs[".github/workflows/pr.yml"]["jobs"]["plan"]
+        invocation = next(step for step in plan["steps"] if step.get("uses") == "./.github/actions/cloud-setup")
+        self.assertEqual({"MODE": "setup", "SETUP_ONLY": "true"}, invocation["env"])
+        self.assertEqual({"MODE": "plan", "PLAN_ONLY": "true"}, plan["steps"][-2]["env"])
+        self.assertEqual({"MODE": "plan-step", "PLAN_ONLY": "true"}, plan["steps"][-1]["env"])
+        self.assertEqual({"DEPLOY_ENVIRONMENT": "preview", "PREVIEW_NUMBER": "${{ github.event.pull_request.number }}"}, plan["env"])
+        self.assertNotIn("env", plan["steps"][0])
+        setup = docs[".github/actions/cloud-setup/action.yml"]["runs"]["steps"]
+        self.assertNotIn("env", setup[0])
+        self.assertEqual({"MODE": "setup-step"}, setup[1]["env"])
+        self.assertEqual(original, config)
+
+    def test_deploy_and_readiness_env_have_separate_scopes_and_step_override(self):
+        config = fixture()
+        phases = config["provider"]["phases"]
+        phases["deploy"]["env"] = {"MODE": "apply", "DEPLOY_ONLY": "true"}
+        phases["readiness"]["env"] = {"MODE": "serving", "READINESS_ONLY": "true"}
+        phases["readiness"]["steps"].append({"name": "Inspect serving revision", "run": "echo inspect", "env": {"MODE": "inspect"}})
+        _, docs = scaffold.render_documents(config)
+        job = docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]
+        self.assertEqual({"MODE": "apply", "DEPLOY_ONLY": "true"}, job["steps"][-3]["env"])
+        self.assertEqual({"MODE": "serving", "READINESS_ONLY": "true"}, job["steps"][-2]["env"])
+        self.assertEqual({"MODE": "inspect", "READINESS_ONLY": "true"}, job["steps"][-1]["env"])
+        self.assertEqual({"DEPLOY_ENVIRONMENT": "${{ inputs.environment }}", "PREVIEW_NUMBER": "${{ inputs.preview-number }}", "SOURCE_RUN_ID": "${{ inputs.source-run-id }}", "SOURCE_SHA": "${{ inputs.source-sha }}"}, job["env"])
+        for step in job["steps"][:-3]:
+            self.assertNotIn("env", step)
+
+    def test_verify_validate_destroy_and_recovery_env_stay_on_their_steps(self):
+        config = fixture()
+        config["verify"]["end-to-end"] = {"steps": [{"name": "Verify serving", "run": "echo serving"}]}
+        phases = config["provider"]["phases"]
+        phases["setup"] = {"env": {"MODE": "setup", "SETUP_ONLY": "true"}, "steps": [{"name": "Initialize the provider", "run": "echo setup"}]}
+        config["verify"]["unit"]["matrix"] = {"runtime": ["stable", "preview"]}
+        scopes = [("pr", "verify-" + layer, val) for layer, val in config["verify"].items()]
+        scopes.extend([("ci", "validate", phases["validate"]), ("pr", "recover-preview", phases["recover"]), ("destroy-preview", "destroy", phases["destroy"])])
+        for _, key, val in scopes:
+            val["env"] = {"MODE": key, "PHASE_ONLY": "true"}
+            val["steps"].append({"name": "Inspect " + key, "run": "echo inspect", "env": {"MODE": "step"}})
+        _, docs = scaffold.render_documents(config)
+        for event, key, _ in scopes:
+            with self.subTest(job=key):
+                job = docs[f".github/workflows/{event}.yml"]["jobs"][key]
+                self.assertEqual({"MODE": key, "PHASE_ONLY": "true"}, job["steps"][-2]["env"])
+                self.assertEqual({"MODE": "step", "PHASE_ONLY": "true"}, job["steps"][-1]["env"])
+                self.assertFalse({"MODE", "PHASE_ONLY", "SETUP_ONLY"} & job.get("env", {}).keys())
+                for step in job["steps"][:-2]:
+                    if step.get("uses") == "./.github/actions/cloud-setup":
+                        self.assertEqual({"MODE": "setup", "SETUP_ONLY": "true"}, step["env"])
+                    else:
+                        self.assertNotIn("env", step)
+        self.assertEqual({"fail-fast": False, "matrix": {"runtime": ["stable", "preview"]}}, docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]["strategy"])
+
+    def test_cloud_build_setup_env_does_not_reach_build_or_upload(self):
+        config = fixture()
+        config["build"]["oidc"] = True
+        config["build"]["steps"][0]["env"] = {"MODE": "build"}
+        config["provider"]["phases"]["setup"] = {"env": {"MODE": "setup", "SETUP_ONLY": "true"}, "steps": [{"name": "Initialize the provider", "run": "echo setup"}]}
+        _, docs = scaffold.render_documents(config)
+        for event in ("pr", "ci"):
+            job = docs[f".github/workflows/{event}.yml"]["jobs"]["build"]
+            self.assertEqual({"MODE": "setup", "SETUP_ONLY": "true"}, job["steps"][-3]["env"])
+            self.assertEqual({"MODE": "build"}, job["steps"][-2]["env"])
+            self.assertNotIn("env", job["steps"][-1])
+            self.assertEqual({"DEPLOY_ENVIRONMENT", "PREVIEW_NUMBER", "SOURCE_SHA", "SOURCE_RUN_ID"}, job["env"].keys())
+
     def test_cloud_phase_roots_install_declared_toolchains(self):
         config = fixture()
         config["provider"]["oidc"] = True
@@ -203,6 +291,22 @@ class RenderingTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_build_step_id_cannot_collide_with_writer_artifact_step(self):
+        for oidc in (False, True):
+            with self.subTest(oidc=oidc):
+                config = fixture()
+                config["build"]["oidc"] = oidc
+                config["build"]["steps"][0]["id"] = "artifact"
+                with self.assertRaisesRegex(scaffold.InputError, "Build the deployment artifact: repeated step id artifact"):
+                    scaffold.render(config)
+
+    def test_joined_deploy_and_readiness_step_ids_must_be_distinct(self):
+        config = fixture()
+        for key in ("deploy", "readiness"):
+            config["provider"]["phases"][key]["steps"][0]["id"] = "revision"
+        with self.assertRaisesRegex(scaffold.InputError, "Deploy and verify the serving environment: repeated step id revision"):
+            scaffold.render(config)
+
     def test_malformed_provider_and_config_inputs_fail_before_rendering(self):
         mutations = [
             lambda c: c.update({"jobs": {}}),
@@ -285,6 +389,15 @@ class AtomicCliTests(unittest.TestCase):
         self.config.write_text(json.dumps(config), encoding="utf-8")
         result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
         self.assertEqual(2, result.returncode)
+        self.assertEqual([], list(self.project.iterdir()))
+
+    def test_joined_step_id_collision_exits_two_before_writing(self):
+        config = fixture()
+        config["build"]["steps"][0]["id"] = "artifact"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+        self.assertEqual(2, result.returncode)
+        self.assertIn("repeated step id artifact", result.stderr)
         self.assertEqual([], list(self.project.iterdir()))
 
     def test_partial_write_failure_rolls_back_and_preserves_existing_files(self):

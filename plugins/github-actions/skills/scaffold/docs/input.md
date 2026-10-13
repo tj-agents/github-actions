@@ -50,6 +50,12 @@ sign-in actions. Untrusted expression values belong in step `env`, never command
 Secrets also stay in step `env`; phase/job `env` cannot contain secrets. Artifact uploads declare
 `if-no-files-found` and `retention-days`.
 
+Phase `env` applies only to that phase's steps, with explicit step values taking precedence. Setup
+`env` applies to its `cloud-setup` invocation; explicit env on steps inside that composite takes
+precedence. Writer-owned deployment variables remain at job scope. Step IDs must be distinct across
+each assembled job, including joined deploy/readiness steps and the writer's `artifact` upload step.
+IDs and their references are preserved.
+
 Reusable deploy exposes `environment`, `preview-number`, `source-sha`, `source-run-id`, and optional
 `artifact-id`. Provider deployment steps receive `DEPLOY_ENVIRONMENT`, `PREVIEW_NUMBER`, `SOURCE_SHA`,
 `SOURCE_RUN_ID` and `ARTIFACT_DIRECTORY` as environment variables. Teardown and recovery receive the
