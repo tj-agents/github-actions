@@ -21,6 +21,8 @@ Owns failure, cancellation and concurrency policy.
   `cancel-in-progress: false`. A teardown shares its preview's group.
 - A workflow that cancels runs which hold infrastructure state has an `if: cancelled()` job that releases
   the leaked lock.
-- Every job sets `timeout-minutes`.
+- Every executing job sets `timeout-minutes`. A reusable-workflow caller sets the timeout in the called
+  workflow because GitHub does not support that key on the caller. This clarifies the 2026-10-12 rule
+  against GitHub workflow syntax; it does not remove a timeout from executing jobs.
 - A job that depends on a deploy uses `if: ${{ !cancelled() && needs.<job>.result == 'success' }}`.
   Annotations use `::error file=…::` so a failure points at its cause.
