@@ -120,6 +120,8 @@ def expression_contexts(value: object) -> set[str]:
                 continue
             if token[1] == "secrets":
                 contexts.add("secrets")
+            elif token[1] in {"steps", "needs", "matrix"}:
+                contexts.add("untrusted")
             elif token[1] == "inputs":
                 contexts.update({"inputs", "untrusted"})
             elif token[1] == "github":
@@ -144,31 +146,28 @@ def environment_references(value: object) -> set[str | None]:
     return references
 
 
-def environment_contexts(value: object, environment: dict) -> set[str]:
+def environment_contexts(value: object, environment: dict[str, frozenset[str]]) -> set[str]:
     contexts = expression_contexts(value)
-    pending = [(name, frozenset()) for name in environment_references(value)]
-    seen = set()
-    while pending:
-        name, path = pending.pop()
-        if name is None or name in path or name not in environment:
-            contexts.add("unknown-env")
-        elif name not in seen:
-            seen.add(name)
-            dependency = environment[name]
-            contexts.update(expression_contexts(dependency))
-            pending.extend((reference, path | {name}) for reference in environment_references(dependency))
+    for name in environment_references(value):
+        contexts.update(environment.get(name, frozenset({"unknown-env"})))
     return contexts
+
+
+def resolved_environment(assignments: dict, inherited: dict[str, frozenset[str]]) -> dict[str, frozenset[str]]:
+    return {**inherited, **{key.lower(): frozenset(environment_contexts(val, inherited)) for key, val in assignments.items()}}
 
 
 def validate_environment_boundaries(config: dict) -> None:
     composites = config["provider"]["composites"]
     visited = set()
 
-    def check(scope: dict, inherited: dict, where: str, actions: frozenset[str]) -> None:
-        phase_env = {**inherited, **scope.get("env", {})}
+    def check(scope: dict, inherited: dict[str, frozenset[str]], where: str, actions: frozenset[str], *, setup: bool = False) -> None:
+        if setup:
+            inherited = resolved_environment(scope.get("env", {}), inherited)
         for index, step in enumerate(scope["steps"]):
             label = f"{where}.steps[{index}]"
-            environment = {key.lower(): val for key, val in {**phase_env, **step.get("env", {})}.items()}
+            assignments = {**({} if setup else scope.get("env", {})), **step.get("env", {})}
+            environment = resolved_environment(assignments, inherited)
             for key, val in step.items():
                 if key != "env" and "secrets" in environment_contexts(val, environment):
                     raise InputError(f"{label}: pass secrets through the consuming step env")
@@ -183,14 +182,14 @@ def validate_environment_boundaries(config: dict) -> None:
                 if name in actions:
                     raise InputError(f"{label}: recursive local composite action")
                 visited.add(name)
-                check(composites[name], {**phase_env, **step.get("env", {})}, "composite." + name, actions | {name})
+                check(composites[name], environment, "composite." + name, actions | {name})
 
-    writer_env = {key: "writer-owned" for key in RESERVED_ENV}
+    writer_env = {key.lower(): frozenset() for key in RESERVED_ENV}
     scopes = [*config["verify"].items(), *config["provider"]["phases"].items()]
     if "build" in config:
         scopes.append(("build", config["build"]))
     for name, scope in scopes:
-        check(scope, writer_env, name, frozenset())
+        check(scope, writer_env, name, frozenset(), setup=name == "setup")
     for name, scope in composites.items():
         if name not in visited:
             check(scope, writer_env, "composite." + name, frozenset({name}))

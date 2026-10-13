@@ -463,27 +463,24 @@ class ValidationTests(unittest.TestCase):
                         with self.assertRaises(scaffold.InputError):
                             scaffold.render(config)
 
-    def test_phase_alias_provenance_uses_explicit_step_override_precedence(self):
+    def test_phase_and_step_env_assignments_share_one_inherited_snapshot(self):
         for script in (False, True):
-            with self.subTest(script=script):
-                config = fixture()
-                phase = config["verify"]["unit"]
-                phase["env"] = {"TITLE": "${{ github['event']['pull_request']['title'] }}", "ALIAS": "${{ env.TITLE }}"}
-                step = {"name": "Read alias"}
-                if script:
-                    step.update({"uses": "actions/github-script", "with": {"script": "console.log('${{ env.ALIAS }}');"}})
-                else:
-                    step["run"] = "echo ${{ env.ALIAS }}"
-                phase["steps"] = [step]
-                with self.assertRaises(scaffold.InputError):
-                    scaffold.render(config)
-                step["env"] = {"TITLE": "literal"}
-                _, docs = scaffold.render_documents(config)
-                self.assertEqual("literal", docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]["steps"][-1]["env"]["TITLE"])
-                phase["env"]["TITLE"] = "phase-literal"
-                step["env"]["TITLE"] = "${{ secrets.PASSWORD }}"
-                with self.assertRaises(scaffold.InputError):
-                    scaffold.render(config)
+            for title in ("literal", "${{ github.event.pull_request.title }}"):
+                with self.subTest(script=script, title=title):
+                    config = fixture()
+                    phase = config["verify"]["unit"]
+                    phase["env"] = {"TITLE": title}
+                    step = {"name": "Read alias", "env": {"ALIAS": "${{ env.TITLE }}", "TITLE": "literal"}}
+                    if script:
+                        step.update({"uses": "actions/github-script", "with": {"script": "console.log('${{ env.ALIAS }}');"}})
+                    else:
+                        step["run"] = "echo ${{ env.ALIAS }}"
+                    phase["steps"] = [step]
+                    with self.assertRaises(scaffold.InputError):
+                        scaffold.render(config)
+                    step["env"]["ALIAS"] = "literal-alias"
+                    _, docs = scaffold.render_documents(config)
+                    self.assertEqual({"TITLE": "literal", "ALIAS": "literal-alias"}, docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]["steps"][-1]["env"])
 
     def test_transitive_unknown_and_cyclic_env_aliases_fail_closed(self):
         maps = [
@@ -504,34 +501,37 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(scaffold.InputError):
             scaffold.render(config)
 
-    def test_composite_aliases_use_invocation_env_and_internal_step_overrides(self):
-        config = fixture()
-        config["provider"]["composites"] = {"read-alias": {"description": "Read alias", "steps": [{"name": "Print alias", "run": "echo ${{ env.ALIAS }}", "env": {"ALIAS": "${{ env.TITLE }}"}}]}, "forward-alias": {"description": "Forward alias", "steps": [{"name": "Read inherited alias", "uses": "./.github/actions/read-alias"}]}}
-        config["provider"]["composites"]["read-alias"]["steps"].append({"name": "Read script alias", "uses": "actions/github-script", "with": {"script": "console.log('${{ env.ALIAS }}');"}, "env": {"ALIAS": "${{ env.TITLE }}"}})
-        config["verify"]["unit"]["env"] = {"TITLE": "${{ github.event.pull_request.title }}"}
-        config["verify"]["unit"]["steps"] = [{"name": "Forward context", "uses": "./.github/actions/forward-alias"}]
-        with self.assertRaises(scaffold.InputError):
-            scaffold.render(config)
-        config["verify"]["unit"]["steps"][0]["env"] = {"TITLE": "safe"}
-        scaffold.render(config)
-        config["provider"]["composites"]["read-alias"]["steps"][0]["env"]["TITLE"] = "${{ secrets.PASSWORD }}"
-        with self.assertRaises(scaffold.InputError):
-            scaffold.render(config)
-        config["provider"]["composites"]["read-alias"]["steps"][0]["run"] = "printf '%s' \"$ALIAS\""
-        scaffold.render(config)
-        script_step = config["provider"]["composites"]["read-alias"]["steps"][1]
-        script_step["env"]["TITLE"] = "${{ secrets.PASSWORD }}"
-        with self.assertRaises(scaffold.InputError):
-            scaffold.render(config)
-        script_step["with"]["script"] = "console.log(process.env.ALIAS);"
-        scaffold.render(config)
+    def test_nested_composite_captures_retain_provenance_across_shadowed_bindings(self):
+        for script in (False, True):
+            for origin in ("${{ github.event.pull_request.title }}", "${{ secrets.PASSWORD }}", "literal", "${{ github.sha }}", "${{ vars.RELEASE_NAME }}"):
+                with self.subTest(script=script, origin=origin):
+                    config = fixture()
+                    shadow = "later-literal" if "github.event" in origin or "secrets" in origin else "${{ github.event.pull_request.title }}"
+                    sink = {"name": "Consume captured value", "env": {"TITLE": shadow}}
+                    if script:
+                        sink.update({"uses": "actions/github-script", "with": {"script": "console.log('${{ env.FINAL }}');"}})
+                    else:
+                        sink["run"] = "echo ${{ env.FINAL }}"
+                    config["provider"]["composites"] = {
+                        "capture-title": {"description": "Capture title", "steps": [{"name": "Capture original title", "uses": "./.github/actions/capture-alias", "env": {"ALIAS": "${{ env.TITLE }}", "TITLE": shadow}}]},
+                        "capture-alias": {"description": "Capture alias", "steps": [{"name": "Capture original alias", "uses": "./.github/actions/consume-alias", "env": {"FINAL": "${{ env['ALIAS'] }}", "ALIAS": shadow}}]},
+                        "consume-alias": {"description": "Consume alias", "steps": [sink]},
+                    }
+                    config["verify"]["unit"]["steps"] = [{"name": "Provide original title", "uses": "./.github/actions/capture-title", "env": {"TITLE": origin}}]
+                    if "github.event" in origin or "secrets" in origin:
+                        with self.assertRaises(scaffold.InputError):
+                            scaffold.render(config)
+                    else:
+                        scaffold.render(config)
+                    sink["run" if not script else "with"] = "printf '%s' \"$FINAL\"" if not script else {"script": "console.log(process.env.FINAL);"}
+                    scaffold.render(config)
 
-    def test_safe_env_aliases_literals_and_variable_consumption_remain_allowed(self):
-        safe_values = ("literal", "${{ 'github.event secrets.PASSWORD inputs.target' }}", "${{ github.sha }}", "${{ vars.RELEASE_NAME }}")
+    def test_safe_env_values_literals_and_variable_consumption_remain_allowed(self):
+        safe_values = ("literal", "${{ 'github.event secrets.PASSWORD inputs.target env.TITLE' }}", "${{ github.sha }}", "${{ vars.RELEASE_NAME }}")
         for value in safe_values:
             with self.subTest(value=value):
                 config = fixture()
-                config["verify"]["unit"]["steps"] = [{"name": "Read literal", "run": "echo ${{ env.ALIAS }}", "env": {"TITLE": value, "ALIAS": "${{ env.TITLE }}"}}]
+                config["verify"]["unit"]["steps"] = [{"name": "Read literal", "run": "echo ${{ env.TITLE }}", "env": {"TITLE": value}}]
                 scaffold.render(config)
         config = fixture()
         config["verify"]["unit"]["env"] = {"TITLE": "${{ github.event.pull_request.title }}", "ALIAS": "${{ env.TITLE }}"}
@@ -541,6 +541,97 @@ class ValidationTests(unittest.TestCase):
             {"name": "Print quoted words", "run": "echo ${{ 'env.ALIAS' }}"},
         ]
         scaffold.render(config)
+
+    def test_setup_env_is_resolved_before_internal_step_assignments(self):
+        for script in (False, True):
+            for origin in ("literal", "${{ github.event.pull_request.title }}"):
+                with self.subTest(script=script, origin=origin):
+                    config = fixture()
+                    step = {"name": "Consume setup alias", "env": {"ALIAS": "${{ env.TITLE }}", "TITLE": "${{ github.event.pull_request.title }}"}}
+                    if script:
+                        step.update({"uses": "actions/github-script", "with": {"script": "console.log('${{ env.ALIAS }}');"}})
+                    else:
+                        step["run"] = "echo ${{ env.ALIAS }}"
+                    config["provider"]["phases"]["setup"] = {"env": {"TITLE": origin}, "steps": [step]}
+                    if origin == "literal":
+                        scaffold.render(config)
+                    else:
+                        step["env"]["TITLE"] = "literal"
+                        with self.assertRaises(scaffold.InputError):
+                            scaffold.render(config)
+                    step["run" if not script else "with"] = "printf '%s' \"$ALIAS\"" if not script else {"script": "console.log(process.env.ALIAS);"}
+                    scaffold.render(config)
+
+    def test_simultaneous_composite_assignments_do_not_supply_sibling_aliases(self):
+        for script in (False, True):
+            with self.subTest(script=script):
+                config = fixture()
+                step = {"name": "Consume simultaneous alias", "env": {"TITLE": "literal", "ALIAS": "${{ env.TITLE }}"}}
+                if script:
+                    step.update({"uses": "actions/github-script", "with": {"script": "console.log('${{ env.ALIAS }}');"}})
+                else:
+                    step["run"] = "echo ${{ env.ALIAS }}"
+                config["provider"]["composites"] = {"consume-alias": {"description": "Consume alias", "steps": [step]}}
+                config["verify"]["unit"]["steps"] = [{"name": "Call composite", "uses": "./.github/actions/consume-alias"}]
+                with self.assertRaises(scaffold.InputError):
+                    scaffold.render(config)
+
+    def test_runtime_data_contexts_cannot_enter_command_or_script_source(self):
+        expressions = (
+            "${{ steps.capture.outputs.title }}", "${{ StEpS [ 'capture' ] [ 'outputs' ] [ 'title' ] }}",
+            "${{ steps[vars.KEY].outputs.title }}", "${{ toJSON(steps) }}",
+            "${{ needs.build.outputs.title }}", "${{ NeEdS [ 'build' ].outputs.title }}",
+            "${{ needs[vars.KEY] }}", "${{ toJSON(needs) }}",
+            "${{ matrix.title }}", "${{ MaTrIx [ 'title' ] }}",
+            "${{ matrix[vars.KEY] }}", "${{ toJSON(matrix) }}",
+        )
+        for expression in expressions:
+            for script in (False, True):
+                for alias in (False, True):
+                    with self.subTest(expression=expression, script=script, alias=alias):
+                        config = fixture()
+                        step = {"name": "Consume runtime data", "if": scaffold.expr(expression[3:-2].strip() + " != ''")}
+                        reference = "${{ env.VALUE }}" if alias else expression
+                        if alias:
+                            step["env"] = {"VALUE": expression}
+                        if script:
+                            step.update({"uses": "actions/github-script", "with": {"script": "console.log('" + reference + "');"}})
+                        else:
+                            step["run"] = "echo " + reference
+                        config["verify"]["unit"]["steps"] = [step]
+                        with self.assertRaises(scaffold.InputError):
+                            scaffold.render(config)
+                        if script:
+                            step["with"]["script"] = "console.log(process.env.VALUE);"
+                        else:
+                            step["run"] = "printf '%s' \"$VALUE\""
+                        step["env"] = {"VALUE": expression}
+                        scaffold.render(config)
+        config = fixture()
+        config["verify"]["unit"]["steps"] = [{"name": "Read quoted context names", "run": "echo ${{ 'steps.capture.outputs.title needs.build.outputs.title matrix.title' }}"}]
+        scaffold.render(config)
+
+    def test_pr_title_captured_as_output_or_matrix_still_requires_env_consumption(self):
+        for script in (False, True):
+            for matrix in (False, True):
+                with self.subTest(script=script, matrix=matrix):
+                    config = fixture()
+                    phase = config["verify"]["unit"]
+                    capture = {"name": "Capture PR title", "id": "capture", "uses": "actions/github-script", "env": {"TITLE": "${{ github.event.pull_request.title }}"}, "with": {"script": "core.setOutput('title', process.env.TITLE);"}}
+                    if matrix:
+                        phase["matrix"] = {"title": ["${{ github.event.pull_request.title }}"]}
+                    reference = "${{ matrix.title }}" if matrix else "${{ steps.capture.outputs.title }}"
+                    consume = {"name": "Consume captured title"}
+                    if script:
+                        consume.update({"uses": "actions/github-script", "with": {"script": "console.log('" + reference + "');"}})
+                    else:
+                        consume["run"] = "echo " + reference
+                    phase["steps"] = [capture, consume]
+                    with self.assertRaises(scaffold.InputError):
+                        scaffold.render(config)
+                    consume["env"] = {"TITLE": reference}
+                    consume["run" if not script else "with"] = "printf '%s' \"$TITLE\"" if not script else {"script": "console.log(process.env.TITLE);"}
+                    scaffold.render(config)
 
     def test_secret_env_aliases_cannot_bypass_implicit_condition_boundary(self):
         for condition in ("env.PASSWORD != ''", "${{ env['PASSWORD'] != '' }}"):
