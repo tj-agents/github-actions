@@ -247,6 +247,42 @@ class RenderingTests(unittest.TestCase):
                                     pnpm = next(step for step in steps if "pnpm/action-setup" in step.get("uses", ""))
                                     self.assertEqual({"package_json_file": "package.json", "run_install": False}, pnpm["with"])
 
+    def test_all_lifecycle_toolchains_disable_caches_independently_of_oidc(self):
+        for manager, lockfile in (("npm", "package-lock.json"), ("pnpm", "pnpm-lock.yaml")):
+            for oidc in (False, True):
+                with self.subTest(manager=manager, oidc=oidc):
+                    config = fixture()
+                    config["provider"]["oidc"] = oidc
+                    for phase in ("plan", "deploy", "readiness", "destroy", "recover"):
+                        config["provider"]["phases"][phase]["roots"] = ["."]
+                    metadata = {"global.json": '{"sdk":{"version":"10.0.100"}}', "packages.lock.json": "{}", "package.json": json.dumps({"engines": {"node": "24.x"}, "packageManager": manager + "@" + ("11.0.0" if manager == "npm" else "10.0.0")}), lockfile: "{}"}
+                    _, docs = scaffold.render_documents(config, metadata)
+                    pr = docs[".github/workflows/pr.yml"]["jobs"]
+                    lifecycle = ((pr["plan"], 1), (pr["recover-preview"], 2), (docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"], 2), (docs[".github/workflows/destroy-preview.yml"]["jobs"]["destroy"], 1))
+                    for job, count in lifecycle:
+                        nodes = [step for step in job["steps"] if "setup-node" in step.get("uses", "")]
+                        dotnets = [step for step in job["steps"] if "setup-dotnet" in step.get("uses", "")]
+                        self.assertEqual(count, len(nodes))
+                        self.assertEqual(count, len(dotnets))
+                        for node in nodes:
+                            self.assertEqual({"node-version-file": "package.json", "package-manager-cache": False}, node["with"])
+                        for dotnet in dotnets:
+                            self.assertEqual({"global-json-file": "global.json"}, dotnet["with"])
+                        if manager == "pnpm":
+                            pnpms = [step for step in job["steps"] if "pnpm/action-setup" in step.get("uses", "")]
+                            self.assertEqual(count, len(pnpms))
+                            for pnpm in pnpms:
+                                self.assertEqual({"package_json_file": "package.json", "run_install": False}, pnpm["with"])
+                    for event in ("pr", "ci"):
+                        for name in ("verify-unit", "build"):
+                            job = docs[f".github/workflows/{event}.yml"]["jobs"][name]
+                            node = next(step for step in job["steps"] if "setup-node" in step.get("uses", ""))
+                            dotnet = next(step for step in job["steps"] if "setup-dotnet" in step.get("uses", ""))
+                            self.assertEqual(manager, node["with"]["cache"])
+                            self.assertEqual(lockfile, node["with"]["cache-dependency-path"])
+                            self.assertIs(True, dotnet["with"]["cache"])
+                            self.assertEqual("packages.lock.json", dotnet["with"]["cache-dependency-path"])
+
     def test_cloud_phase_roots_install_declared_toolchains(self):
         config = fixture()
         config["provider"]["oidc"] = True
@@ -742,6 +778,56 @@ class ValidationTests(unittest.TestCase):
                 config["provider"]["phases"]["deploy"]["env"] = {"LABEL": "${{ 'secrets.PASSWORD' }}", "PLAIN": "secrets.PASSWORD"}
                 scaffold.render(config)
 
+    def test_supplied_artifact_uploads_cannot_replace_the_writer_artifact(self):
+        settings = [
+            {"name": "deployment"}, {"name": "  deployment  "}, {"name": "\tdeployment\n"},
+            {"name": "${{ vars.ARTIFACT_NAME }}"}, {"name": "${{ 'deployment' }}"},
+            {"name": "diagnostic-${{ github.run_id }}"}, {"name": "${{ inputs.artifact-name }}"},
+            {"overwrite": True}, {"overwrite": "true"}, {"overwrite": "false"},
+            {"overwrite": 0}, {"overwrite": "${{ false }}"}, {"overwrite": "${{ vars.OVERWRITE }}"},
+            {"name": "diagnostics", "archive": False, "overwrite": True},
+        ]
+        for extra in settings:
+            for destination in ("verify", "build", "deploy", "composite", "nested", "unused"):
+                with self.subTest(extra=extra, destination=destination):
+                    config = fixture()
+                    upload = {"name": "Upload diagnostics", "uses": "actions/upload-artifact", "with": {"path": "diagnostics", "if-no-files-found": "warn", "retention-days": 7, **extra}}
+                    if destination in {"composite", "nested", "unused"}:
+                        config["provider"]["composites"] = {"upload-diagnostics": {"description": "Upload diagnostics", "steps": [upload]}}
+                        action = "upload-diagnostics"
+                        if destination == "nested":
+                            config["provider"]["composites"]["forward-diagnostics"] = {"description": "Forward diagnostics", "steps": [{"name": "Call upload composite", "uses": "./.github/actions/upload-diagnostics"}]}
+                            action = "forward-diagnostics"
+                        if destination != "unused":
+                            config["verify"]["unit"]["steps"].append({"name": "Call diagnostic composite", "uses": "./.github/actions/" + action})
+                    else:
+                        phase = config["verify"]["unit"] if destination == "verify" else config["build"] if destination == "build" else config["provider"]["phases"]["deploy"]
+                        phase["steps"].append(upload)
+                    with self.assertRaisesRegex(scaffold.InputError, "cannot overwrite artifacts|reserved deployment"):
+                        scaffold.render(config)
+
+    def test_independent_diagnostic_uploads_preserve_the_writer_artifact(self):
+        for extra in ({}, {"name": "diagnostics"}, {"name": "deployment-report", "overwrite": False}, {"name": "diagnostics", "archive": False}, {"archive": False, "overwrite": False}):
+            for composite in (False, True):
+                with self.subTest(extra=extra, composite=composite):
+                    config = fixture()
+                    upload = {"name": "Upload diagnostics", "uses": "actions/upload-artifact", "with": {"path": "diagnostics", "if-no-files-found": "warn", "retention-days": 7, **extra}}
+                    if composite:
+                        config["provider"]["composites"] = {"upload-diagnostics": {"description": "Upload diagnostics", "steps": [upload]}}
+                        config["provider"]["phases"]["deploy"]["steps"].append({"name": "Call diagnostic composite", "uses": "./.github/actions/upload-diagnostics"})
+                    else:
+                        config["provider"]["phases"]["deploy"]["steps"].append(upload)
+                    _, docs = scaffold.render_documents(config)
+                    if composite:
+                        emitted = docs[".github/actions/upload-diagnostics/action.yml"]["runs"]["steps"][0]
+                    else:
+                        emitted = next(step for step in docs[".github/workflows/deploy-environment.yml"]["jobs"]["deploy"]["steps"] if step["name"] == "Upload diagnostics")
+                    self.assertEqual(upload["with"], emitted["with"])
+                    for event in ("pr", "ci"):
+                        writer = next(step for step in docs[f".github/workflows/{event}.yml"]["jobs"]["build"]["steps"] if step.get("id") == "artifact")
+                        self.assertEqual("deployment", writer["with"]["name"])
+                        self.assertNotIn("overwrite", writer["with"])
+
     def test_build_step_id_cannot_collide_with_writer_artifact_step(self):
         for oidc in (False, True):
             with self.subTest(oidc=oidc):
@@ -850,6 +936,22 @@ class AtomicCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("repeated step id artifact", result.stderr)
         self.assertEqual([], list(self.project.iterdir()))
+
+    def test_artifact_ownership_validation_exits_two_before_writing(self):
+        for extra in ({"name": "deployment"}, {"name": "${{ vars.ARTIFACT_NAME }}"}, {"name": "diagnostics", "overwrite": "${{ true }}"}):
+            for composite in (False, True):
+                with self.subTest(extra=extra, composite=composite):
+                    config = fixture()
+                    upload = {"name": "Upload diagnostics", "uses": "actions/upload-artifact", "with": {"path": "diagnostics", "if-no-files-found": "warn", "retention-days": 7, **extra}}
+                    if composite:
+                        config["provider"]["composites"] = {"upload-diagnostics": {"description": "Upload diagnostics", "steps": [upload]}}
+                        config["verify"]["unit"]["steps"].append({"name": "Call upload composite", "uses": "./.github/actions/upload-diagnostics"})
+                    else:
+                        config["provider"]["phases"]["deploy"]["steps"].append(upload)
+                    self.config.write_text(json.dumps(config), encoding="utf-8")
+                    result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+                    self.assertEqual(2, result.returncode)
+                    self.assertEqual([], list(self.project.iterdir()))
 
     def test_context_validation_exits_two_before_writing(self):
         for destination in ("phase", "run", "script"):

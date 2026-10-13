@@ -100,7 +100,7 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. WW-11/13 are accepted; repair WW-12/14 lifecycle cache/artifact ownership, then complete fresh incremental review and exact-head CI.
+1. All fourteen review findings have repair dispositions; complete fresh incremental review and exact-head CI.
 2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
 3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
 
@@ -226,3 +226,11 @@ shell/script source interpolation. Captured safe values, conditions and variable
 supported. Parent inspected canonical renderer/docs/tests; 67 required-Node tests pass without skips,
 AST uniqueness and 72-file generation/freshness pass, and the sole writer stopped all writes.
 WW-12 lifecycle caches and WW-14 artifact namespace are the next separate repair group.
+
+WW-12/14 accepted: all lifecycle toolchain installation disables dependency caches independently of
+OIDC. npm/pnpm/.NET verification and unprivileged-build caches remain supported. Supplied uploads
+cannot overwrite artifacts or select the writer-owned deployment name; supplied dynamic names reject
+because static ownership cannot be proved. Literal diagnostic names and the action default remain
+supported. Parent inspected renderer/docs/tests; 71 required-Node tests pass without skips, AST
+uniqueness and 72-file generation/freshness pass. All sole-writer command handles completed.
+No additional scope is added before fresh independent review and exact-head CI.
