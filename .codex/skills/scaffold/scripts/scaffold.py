@@ -25,7 +25,7 @@ PINS = {
 PHASES = {"setup", "validate", "plan", "deploy", "readiness", "destroy", "recover"}
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-UNTRUSTED_SCRIPT = re.compile(r"\$\{\{[^}]*\b(?:inputs|github\.event|github\.head_ref)\b")
+EXPRESSION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 TRUSTED = "github.event.pull_request.head.repo.full_name == github.repository"
 PREVIEW = "contains(github.event.pull_request.labels.*.name, 'deploy-preview')"
 VERIFY_CONCURRENCY = "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
@@ -51,6 +51,78 @@ def action(name: str) -> Pin:
 
 def expr(text: str) -> str:
     return "${{ " + text + " }}"
+
+
+def expression_tokens(value: str) -> list[list[tuple[str, str]]]:
+    expressions = []
+    position = 0
+    while True:
+        start = value.find("${{", position)
+        if start < 0:
+            return expressions
+        position = start + 3
+        tokens = []
+        while position < len(value) and not value.startswith("}}", position):
+            char = value[position]
+            if char.isspace():
+                position += 1
+            elif char == "'":
+                position += 1
+                literal = []
+                while position < len(value):
+                    if value[position] == "'":
+                        position += 1
+                        if position < len(value) and value[position] == "'":
+                            literal.append("'")
+                            position += 1
+                        else:
+                            break
+                    else:
+                        literal.append(value[position])
+                        position += 1
+                else:
+                    raise InputError("unterminated expression string")
+                tokens.append(("string", "".join(literal).lower()))
+            else:
+                name = EXPRESSION_NAME.match(value, position)
+                if name:
+                    tokens.append(("name", name.group().lower()))
+                    position = name.end()
+                else:
+                    tokens.append(("symbol", char))
+                    position += 1
+        if position >= len(value):
+            raise InputError("unterminated expression")
+        expressions.append(tokens)
+        position += 2
+
+
+def expression_contexts(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*(expression_contexts(val) for val in value.values()))
+    if isinstance(value, list):
+        return set().union(*(expression_contexts(val) for val in value))
+    if not isinstance(value, str):
+        return set()
+    contexts = set()
+    for tokens in expression_tokens(value):
+        for index, token in enumerate(tokens):
+            if token[0] != "name" or (index > 0 and tokens[index - 1] == ("symbol", ".")):
+                continue
+            if token[1] == "secrets":
+                contexts.add("secrets")
+            elif token[1] == "inputs":
+                contexts.update({"inputs", "untrusted"})
+            elif token[1] == "github":
+                following = tokens[index + 1: index + 5]
+                property_name = None
+                if len(following) >= 2 and following[0] == ("symbol", ".") and following[1][0] == "name":
+                    property_name = following[1][1]
+                elif len(following) >= 3 and following[0] == ("symbol", "[") and following[1][0] == "string" and following[2] == ("symbol", "]"):
+                    property_name = following[1][1]
+                if property_name is None or property_name in {"event", "head_ref"}:
+                    contexts.add("untrusted")
+    return contexts
 
 
 def object_keys(value: object, allowed: set[str], where: str) -> dict:
@@ -122,9 +194,11 @@ def steps(value: object, where: str, composite: bool = False) -> list[dict]:
         for key in ("if", "working-directory"):
             if key in step:
                 text(step[key], label + "." + key)
+        if any("secrets" in expression_contexts(val) for key, val in step.items() if key != "env"):
+            raise InputError(f"{label}: pass secrets through the consuming step env")
         if "run" in step:
             command = text(step["run"], label + ".run")
-            if "with" in step or UNTRUSTED_SCRIPT.search(command):
+            if "with" in step or "untrusted" in expression_contexts(command):
                 raise InputError(f"{label}: pass untrusted script inputs through env")
             if step.get("shell", "bash") != "bash":
                 raise InputError(f"{label}: the canonical shell is bash")
@@ -141,7 +215,7 @@ def steps(value: object, where: str, composite: bool = False) -> list[dict]:
                 raise InputError(f"{label}: action must be local or in the writer's pin catalog")
             if name == "actions/checkout":
                 step.setdefault("with", {})["persist-credentials"] = False
-            if name == "actions/github-script" and UNTRUSTED_SCRIPT.search(str(step.get("with", {}).get("script", ""))):
+            if name == "actions/github-script" and "untrusted" in expression_contexts(step.get("with", {}).get("script", "")):
                 raise InputError(f"{label}: pass untrusted script inputs through env")
             if name == "actions/upload-artifact":
                 settings = step.get("with", {})
@@ -158,7 +232,7 @@ def phase(value: object, where: str) -> dict:
         result["roots"] = roots(value["roots"], where + ".roots")
     if "env" in value:
         result["env"] = scalar_map(value["env"], where + ".env", True)
-        if set(result["env"]) & RESERVED_ENV or any("secrets." in str(v) for v in result["env"].values()):
+        if set(result["env"]) & RESERVED_ENV or "secrets" in expression_contexts(result["env"]):
             raise InputError(f"{where}: reserved env or job-level secrets")
     if "matrix" in value:
         matrix = value["matrix"]
@@ -436,7 +510,7 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
     if "setup" in phases:
         if "cloud-setup" in provider["composites"]:
             raise InputError("cloud-setup is reserved for the repeated provider setup envelope")
-        if "inputs." in json.dumps(phases["setup"]):
+        if "inputs" in expression_contexts(phases["setup"]):
             raise InputError("provider.setup uses writer env data rather than workflow inputs")
         documents[".github/actions/cloud-setup/action.yml"] = {"name": "Set up the cloud provider", "description": "Run the provider's repeated sign-in and initialization steps", "runs": {"using": "composite", "steps": [*toolchains(phases["setup"].get("roots", []), files, privileged=oidc), *phases["setup"]["steps"]]}}
         setup_steps = [{"name": "Set up the cloud provider", "uses": "./.github/actions/cloud-setup"}]
@@ -479,8 +553,8 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             deploy_needs.append("build")
         if event == "pr":
             val = phases["plan"]
-            jobs["plan"] = executing_job("Plan the infrastructure", [checkout(), *toolchains(val.get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(val)], needs=["validate"], cloud=oidc)
-            jobs["plan"]["if"] = expr(cloud_condition)
+            jobs["plan"] = executing_job("Plan the infrastructure", [checkout(), *toolchains(val.get("roots", []), files, privileged=oidc), *setup_steps, *phase_steps(val)], needs=["lint", "validate"], cloud=oidc)
+            jobs["plan"]["if"] = expr(cloud_condition + " && needs.lint.result == 'success' && needs.validate.result == 'success'")
             jobs["plan"]["environment"] = environments["preview"]
             jobs["plan"]["env"] = {"DEPLOY_ENVIRONMENT": environments["preview"], "PREVIEW_NUMBER": expr("github.event.pull_request.number")}
             apply_phase(jobs["plan"], val)

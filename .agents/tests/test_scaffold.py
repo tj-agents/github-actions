@@ -31,6 +31,20 @@ def body(name):
 
 
 class RenderingTests(unittest.TestCase):
+    def test_plan_waits_for_successful_lint_and_validation_before_provider_setup(self):
+        config = fixture()
+        config["provider"]["oidc"] = True
+        config["provider"]["ready"] = "vars.FOUNDATION_READY == 'true'"
+        config["provider"]["phases"]["setup"] = {"steps": [{"name": "Sign in to the provider", "run": "echo login"}]}
+        _, docs = scaffold.render_documents(config)
+        plan = docs[".github/workflows/pr.yml"]["jobs"]["plan"]
+        self.assertEqual(["lint", "validate"], plan["needs"])
+        for condition in (scaffold.TRUSTED, "vars.FOUNDATION_READY == 'true'", "needs.lint.result == 'success'", "needs.validate.result == 'success'"):
+            self.assertIn(condition, plan["if"])
+        self.assertEqual("write", plan["permissions"]["id-token"])
+        self.assertEqual("./.github/actions/cloud-setup", plan["steps"][-2]["uses"])
+        self.assertEqual("Plan deployment", plan["steps"][-1]["name"])
+
     def test_distinct_joined_step_ids_and_references_are_preserved(self):
         config = fixture()
         config["build"]["steps"][0]["id"] = "package"
@@ -291,6 +305,107 @@ class RenderingTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_setup_uses_writer_env_and_rejects_all_inputs_context_spellings(self):
+        for expression in ("${{ inputs.target }}", "${{ inputs['target'] }}", "${{ InPuTs [ 'target' ] }}", "${{ inputs }}", "${{ toJSON(INPUTS) }}"):
+            with self.subTest(expression=expression):
+                config = fixture()
+                config["provider"]["phases"]["setup"] = {"steps": [{"name": "Initialize provider", "run": "echo setup", "env": {"TARGET": expression}}]}
+                with self.assertRaisesRegex(scaffold.InputError, "provider.setup uses writer env data"):
+                    scaffold.render(config)
+        config = fixture()
+        config["provider"]["phases"]["setup"] = {"env": {"LABEL": "${{ 'inputs.target' }}", "PLAIN": "inputs.target", "TARGET": "${{ env.DEPLOY_ENVIRONMENT }}"}, "steps": [{"name": "Read inputs.target label", "run": "echo inputs.target"}]}
+        scaffold.render(config)
+
+    def test_secret_context_spellings_are_rejected_outside_step_env(self):
+        expressions = [
+            "${{ secrets.PASSWORD }}",
+            "${{ secrets['PASSWORD'] }}",
+            "${{ SeCrEtS [ 'PASSWORD' ] }}",
+            "${{ secrets }}",
+            "${{ toJSON(Secrets) }}",
+            "${{ secrets[vars.KEY] }}",
+            "${{ format('{0}', secrets['PASSWORD']) }}",
+            "${{ secrets.* }}",
+        ]
+        for expression in expressions:
+            for destination in ("phase", "run", "script", "with"):
+                with self.subTest(expression=expression, destination=destination):
+                    config = fixture()
+                    if destination == "phase":
+                        config["provider"]["phases"]["deploy"]["env"] = {"PASSWORD": expression}
+                    elif destination == "run":
+                        config["verify"]["unit"]["steps"][0]["run"] = "echo " + expression
+                    else:
+                        settings = {"script": "return true;"}
+                        settings["script" if destination == "script" else "credential"] = expression
+                        config["verify"]["unit"]["steps"][0] = {"name": "Inspect context", "uses": "actions/github-script", "with": settings}
+                    with self.assertRaises(scaffold.InputError):
+                        scaffold.render(config)
+
+    def test_untrusted_context_spellings_are_rejected_in_commands_and_scripts(self):
+        expressions = [
+            "${{ github.event.pull_request.title }}",
+            "${{ github['event']['pull_request']['title'] }}",
+            "${{ GiThUb [ 'EvEnT' ] . pull_request.title }}",
+            "${{ github . head_ref }}",
+            "${{ GITHUB['HEAD_REF'] }}",
+            "${{ inputs.target }}",
+            "${{ InPuTs [ 'target' ] }}",
+            "${{ toJSON(github.event) }}",
+            "${{ toJSON(github) }}",
+            "${{ toJSON(inputs) }}",
+            "${{ github[vars.CONTEXT_KEY] }}",
+            "${{ github[format('{0}', 'event')] }}",
+            "${{ github.* }}",
+            "${{ (github).event }}",
+            "${{ format('{0}', github['event']) }}",
+        ]
+        for expression in expressions:
+            for destination in ("run", "script"):
+                with self.subTest(expression=expression, destination=destination):
+                    config = fixture()
+                    if destination == "run":
+                        config["verify"]["unit"]["steps"][0]["run"] = "echo " + expression
+                    else:
+                        config["verify"]["unit"]["steps"][0] = {"name": "Inspect context", "uses": "actions/github-script", "with": {"script": "return " + expression + ";"}}
+                    with self.assertRaises(scaffold.InputError):
+                        scaffold.render(config)
+
+    def test_context_values_are_allowed_through_consuming_step_env(self):
+        values = {"PASSWORD": "${{ SeCrEtS['PASSWORD'] }}", "TITLE": "${{ github['event']['pull_request']['title'] }}", "TARGET": "${{ inputs['target'] }}"}
+        config = fixture()
+        config["verify"]["unit"]["steps"] = [
+            {"name": "Consume context", "run": "printf '%s' \"$TITLE\"", "env": values},
+            {"name": "Read context", "uses": "actions/github-script", "with": {"script": "return process.env.TITLE;"}, "env": values},
+        ]
+        _, docs = scaffold.render_documents(config)
+        job = docs[".github/workflows/pr.yml"]["jobs"]["verify-unit"]
+        self.assertNotIn("env", job)
+        for step in job["steps"][-2:]:
+            self.assertEqual(values, step["env"])
+
+    def test_trusted_metadata_and_quoted_context_words_are_allowed(self):
+        expressions = [
+            "${{ github.sha }}",
+            "${{ GiThUb [ 'repository' ] }}",
+            "${{ github . run_id }}",
+            "${{ vars['inputs'] }}",
+            "${{ vars.secrets }}",
+            "${{ 'secrets.PASSWORD github.event inputs.target' }}",
+            "${{ 'it''s github.head_ref and secrets' }}",
+            "${{ format('}} inputs {0}', github['sha']) }}",
+            "${{ format('{0}', '${{ secrets.PASSWORD }}') }}",
+        ]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                config = fixture()
+                config["verify"]["unit"]["steps"] = [
+                    {"name": "Print metadata", "run": "echo " + expression},
+                    {"name": "Read metadata", "uses": "actions/github-script", "with": {"script": "return " + expression + ";"}},
+                ]
+                config["provider"]["phases"]["deploy"]["env"] = {"LABEL": "${{ 'secrets.PASSWORD' }}", "PLAIN": "secrets.PASSWORD"}
+                scaffold.render(config)
+
     def test_build_step_id_cannot_collide_with_writer_artifact_step(self):
         for oidc in (False, True):
             with self.subTest(oidc=oidc):
@@ -399,6 +514,21 @@ class AtomicCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("repeated step id artifact", result.stderr)
         self.assertEqual([], list(self.project.iterdir()))
+
+    def test_context_validation_exits_two_before_writing(self):
+        for destination in ("phase", "run", "script"):
+            with self.subTest(destination=destination):
+                config = fixture()
+                if destination == "phase":
+                    config["provider"]["phases"]["deploy"]["env"] = {"PASSWORD": "${{ secrets['PASSWORD'] }}"}
+                elif destination == "run":
+                    config["verify"]["unit"]["steps"][0]["run"] = "echo ${{ github['event']['pull_request']['title'] }}"
+                else:
+                    config["verify"]["unit"]["steps"][0] = {"name": "Inspect context", "uses": "actions/github-script", "with": {"script": "return ${{ inputs['target'] }};"}}
+                self.config.write_text(json.dumps(config), encoding="utf-8")
+                result = self.run_cli("new", "--config", str(self.config), "--project", str(self.project))
+                self.assertEqual(2, result.returncode)
+                self.assertEqual([], list(self.project.iterdir()))
 
     def test_partial_write_failure_rolls_back_and_preserves_existing_files(self):
         keep = self.project / "keep.txt"

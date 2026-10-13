@@ -50,6 +50,13 @@ sign-in actions. Untrusted expression values belong in step `env`, never command
 Secrets also stay in step `env`; phase/job `env` cannot contain secrets. Artifact uploads declare
 `if-no-files-found` and `retention-days`.
 
+Expression guards recognize case-insensitive context names, dot access, literal bracket access and
+whole-context references. Secret-context references are allowed only in the consuming step's `env`.
+`inputs`, `github.event`, `github.head_ref`, whole `github` and computed GitHub property access must
+pass through step `env` before a command or GitHub script consumes them. Trusted GitHub metadata and
+quoted expression literals remain allowed. PR planning waits for both lint and infrastructure
+validation to succeed before provider setup and commands run.
+
 Phase `env` applies only to that phase's steps, with explicit step values taking precedence. Setup
 `env` applies to its `cloud-setup` invocation; explicit env on steps inside that composite takes
 precedence. Writer-owned deployment variables remain at job scope. Step IDs must be distinct across
