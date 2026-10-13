@@ -12,6 +12,7 @@ while (target.type === "tag") {
   target = tag.data.object;
 }
 if (target.type !== "commit") throw new Error("release tag must resolve to a commit");
+if (target.sha !== context.sha) throw new Error("release tag must match the immutable triggering commit");
 const runs = await github.rest.actions.listWorkflowRuns({
   ...repo, workflow_id: "ci.yml", branch: "main", event: "push", status: "success", per_page: 1,
 });
