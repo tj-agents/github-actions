@@ -86,6 +86,12 @@ resource itself.
 
 Node metadata supports npm and pnpm. Unsupported package managers fail before writing. Dependency caches
 use setup actions only in verification and unprivileged build jobs; cloud jobs do not restore caches.
+Supplied Node and .NET setup steps in setup, plan, deploy, readiness, destroy, recovery or an OIDC build
+also have explicit cache inputs removed and automatic caching disabled. Version and other SDK inputs
+are preserved. Nested local composites reachable from those paths use the same restriction. A shared
+composite takes its most restrictive caller's policy, so its ordinary callers also receive cache-free
+SDK steps. Verification, infrastructure validation and unprivileged build SDK inputs otherwise retain
+their supplied cache settings. Rendering leaves the caller's input configuration unchanged.
 
 Close cleanup keeps the trust/readiness gate and does not depend on the current preview label. Provider
 destroy steps must be idempotent for absent instances, including pull requests whose label was removed.
