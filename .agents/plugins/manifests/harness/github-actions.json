@@ -1,11 +1,68 @@
 {
   "schema_version": 1,
   "plugin": "github-actions-agents/github-actions",
-  "source_roots": [".agents/github-actions"],
+  "source_roots": [
+    ".agents/github-actions"
+  ],
   "requires": {
-    "marketplaces": [{"id": "github-actions-agents", "repository": "tj-agents/github-actions"}, {"id": "base-agents", "repository": "tj-agents/core"}],
-    "plugins": ["github-actions-agents/github-actions", "base-agents/base"],
+    "marketplaces": [
+      {
+        "id": "github-actions-agents",
+        "repository": "tj-agents/github-actions"
+      },
+      {
+        "id": "base-agents",
+        "repository": "tj-agents/core"
+      }
+    ],
+    "plugins": [
+      "github-actions-agents/github-actions",
+      "base-agents/base"
+    ],
     "hooks": [],
-    "permissions": {"claude_allow": [], "codex_prefix_rules": []}
+    "permissions": {
+      "claude_allow": [
+        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
+        "Bash(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)"
+      ],
+      "codex_prefix_rules": [
+        {
+          "pattern": [
+            [
+              "python",
+              "python.exe",
+              "python3",
+              "py"
+            ],
+            "-B",
+            [
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py",
+              "${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py"
+            ]
+          ],
+          "justification": "The shipped stdlib workflow writer renders a complete file map or creates new workflow files with validation, collision refusal and rollback.",
+          "match": [
+            [
+              "python",
+              "-B",
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py"
+            ],
+            [
+              "python",
+              "-B",
+              "${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py"
+            ]
+          ],
+          "not_match": [
+            [
+              "python",
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py"
+            ]
+          ]
+        }
+      ]
+    }
   }
 }

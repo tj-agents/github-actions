@@ -1,10 +1,10 @@
 ---
 name: scaffold
-description: Deliberately creates nothing — GitHub Actions workflows are written by the scaffold that owns a repository's deploy target, into the File structure `github-actions:structure` records. Use to find which scaffold writes a project's workflows.
+description: Generate the canonical deployed-service workflow set from structured provider steps and repository metadata. Use when an app scaffold needs GitHub Actions verification, previews, deployment and optional production releases.
 kind: utility
 domain: github-actions
 profile: scaffold
-applicability: new GitHub Actions projects
+applicability: deployed-service GitHub Actions projects
 requires: github-actions
 provenance: house
 ---

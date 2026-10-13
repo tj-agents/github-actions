@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "roots": ["."],
+  "verify": {
+    "unit": {
+      "steps": [{"name": "Run unit tests", "run": "python3 -m unittest discover -s tests/unit"}]
+    },
+    "integration": {
+      "steps": [{"name": "Run integration tests", "run": "python3 -m unittest discover -s tests/integration"}]
+    }
+  },
+  "build": {
+    "steps": [{"name": "Build the versioned package", "run": "python3 build.py"}],
+    "artifact": {"path": "dist/"}
+  },
+  "provider": {
+    "name": "neutral",
+    "oidc": false,
+    "phases": {
+      "validate": {"steps": [{"name": "Validate deployment configuration", "run": "python3 deploy.py validate"}]},
+      "plan": {"steps": [{"name": "Plan deployment", "run": "python3 deploy.py plan"}]},
+      "deploy": {"steps": [{"name": "Deploy the verified package", "run": "python3 deploy.py apply"}]},
+      "readiness": {"steps": [{"name": "Verify the serving revision", "run": "python3 deploy.py serving"}]},
+      "destroy": {"steps": [{"name": "Destroy the preview", "run": "python3 deploy.py destroy"}]},
+      "recover": {"steps": [{"name": "Recover the infrastructure lock", "run": "python3 deploy.py recover"}]}
+    }
+  }
+}

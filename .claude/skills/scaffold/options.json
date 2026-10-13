@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "options": {
+    "prod-release": {
+      "type": "bool",
+      "default": true,
+      "description": "Include the semver-tag production assertion and deployment workflow."
+    }
+  }
+}

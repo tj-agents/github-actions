@@ -126,7 +126,7 @@
       "kind": "utility",
       "profile": "scaffold",
       "applicability": [
-        "new GitHub Actions projects"
+        "deployed-service GitHub Actions projects"
       ],
       "requires": [
         "github-actions"
