@@ -954,13 +954,18 @@ class CreatedPath:
             self.path.unlink()
 
 
-def release_created_paths(paths: list[CreatedPath]) -> list[Path]:
+def release_created_paths(paths: list[CreatedPath], preserve_error: bool = False) -> list[Path]:
     failed = []
+    release_error = None
     for created in reversed(paths):
         try:
             created.release()
-        except OSError:
+        except BaseException as error:
             failed.append(created.path)
+            if not isinstance(error, OSError) and release_error is None:
+                release_error = error
+    if release_error is not None and not preserve_error:
+        raise release_error
     return failed
 
 
@@ -968,6 +973,8 @@ def write_files(project: Path, files: dict[str, str]) -> None:
     check_targets(project, files)
     written: list[CreatedPath] = []
     directories: list[CreatedPath] = []
+    write_error = None
+    retained = []
     try:
         for relative, content in sorted(files.items()):
             target = project / relative
@@ -990,18 +997,22 @@ def write_files(project: Path, files: dict[str, str]) -> None:
                 created.pin_file(stream.fileno())
                 stream.write(content.replace("\r\n", "\n").encode("utf-8"))
     except (OSError, UnicodeError) as error:
-        retained = []
+        write_error = error
         for created in [*reversed(written), *reversed(directories)]:
             try:
                 created.remove()
             except OSError:
                 retained.append(created.path)
-        failed_releases = release_created_paths([*directories, *written])
+    except BaseException as error:
+        write_error = error
+        raise
+    finally:
+        failed_releases = release_created_paths([*directories, *written], preserve_error=write_error is not None)
+    if write_error is not None:
         detail = f"; retained paths: {', '.join(map(str, retained))}" if retained else ""
         if failed_releases:
             detail += f"; could not release ownership references: {', '.join(map(str, failed_releases))}"
-        raise WriteError(f"write failed; rolled back files created by this run: {error}{detail}") from error
-    failed_releases = release_created_paths([*directories, *written])
+        raise WriteError(f"write failed; rolled back files created by this run: {write_error}{detail}") from write_error
     if failed_releases:
         raise WriteError(f"created outputs but could not release ownership references: {', '.join(map(str, failed_releases))}")
 

@@ -1476,6 +1476,79 @@ class AtomicCliTests(unittest.TestCase):
                     with self.assertRaises(OSError):
                         os.fstat(descriptor)
 
+    def test_write_and_close_interruptions_release_all_pins_without_masking_exception(self):
+        original_open = Path.open
+        original_release = scaffold.CreatedPath.release
+        for exception_type in (KeyboardInterrupt, RuntimeError):
+            for stage in ("write", "close"):
+                for release_error in (None, OSError("release failed"), RuntimeError("release failed")):
+                    with self.subTest(exception=exception_type, stage=stage, release_error=release_error):
+                        interruption = exception_type("original interruption")
+                        descriptors, released = [], []
+                        class Stream:
+                            def __init__(self, stream, name):
+                                self.stream, self.name = stream, name
+                            def __enter__(self):
+                                return self
+                            def fileno(self):
+                                return self.stream.fileno()
+                            def write(self, content):
+                                result = self.stream.write(content)
+                                if self.name == "second" and stage == "write":
+                                    raise interruption
+                                return result
+                            def __exit__(self, *args):
+                                self.stream.close()
+                                if self.name == "second" and stage == "close":
+                                    raise interruption
+                        def open_stream(path, mode="r", *args, **kwargs):
+                            stream = original_open(path, mode, *args, **kwargs)
+                            return Stream(stream, path.name) if mode == "xb" else stream
+                        def release(created):
+                            if created.descriptor is not None:
+                                descriptors.append(created.descriptor)
+                            original_release(created)
+                            released.append(created)
+                            if release_error is not None:
+                                raise release_error
+                        with patch.object(Path, "open", open_stream), patch.object(scaffold.CreatedPath, "release", release), self.assertRaises(exception_type) as caught:
+                            scaffold.write_files(self.project, {"new/first": "one", "new/second": "two"})
+                        self.assertIs(interruption, caught.exception)
+                        self.assertEqual(3, len(released))
+                        for created in released:
+                            self.assertIsNone(created.descriptor)
+                            self.assertIsNone(created.windows_release)
+                        for descriptor in descriptors:
+                            with self.assertRaises(OSError):
+                                os.fstat(descriptor)
+                        moved = self.project / "moved"
+                        (self.project / "new").rename(moved)
+                        self.assertEqual("one", (moved / "first").read_text(encoding="utf-8"))
+                        self.assertEqual("two", (moved / "second").read_text(encoding="utf-8"))
+                        shutil.rmtree(moved)
+
+    def test_interrupted_success_release_attempts_remaining_pins_and_keeps_outputs(self):
+        original_close = os.close
+        interruption = KeyboardInterrupt("release interrupted")
+        closed = []
+        def close(descriptor):
+            original_close(descriptor)
+            closed.append(descriptor)
+            if len(closed) == 1:
+                raise interruption
+        try:
+            raise RuntimeError("caller's handled error")
+        except RuntimeError:
+            with patch.object(os, "close", close), self.assertRaises(KeyboardInterrupt) as caught:
+                scaffold.write_files(self.project, {"first": "one", "second": "two"})
+        self.assertIs(interruption, caught.exception)
+        self.assertEqual(2, len(closed))
+        self.assertEqual("one", (self.project / "first").read_text(encoding="utf-8"))
+        self.assertEqual("two", (self.project / "second").read_text(encoding="utf-8"))
+        for descriptor in closed:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
     def test_failed_file_pin_or_identity_keeps_unproved_output_and_releases_pins(self):
         for failure in ("dup", "fstat", "identity"):
             with self.subTest(failure=failure):
