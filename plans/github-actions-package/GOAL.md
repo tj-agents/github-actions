@@ -100,9 +100,10 @@ Acceptance for this slice:
 
 ## Next Steps
 
-1. All fifteen review findings have repair dispositions; empty verification support is accepted. Complete fresh incremental review and exact-head CI.
-2. Merge the writer, then separately integrate Azure with it and remove generic duplication.
-3. Follow with dotnet's one Web API boilerplate shape and the remaining canonical handoff items.
+1. Repair the public scaffold new-command B001 transaction with live file/directory ownership and contained cleanup.
+2. Complete independent review and exact-head Linux/Windows checks, merge and clean up this bounded repair.
+3. Azure composes the pure renderer and removes generic duplication/B002; then dotnet one-shape boilerplate and the remaining canonical handoff.
+
 
 ### Slice size and boundary - 2026-10-13
 
@@ -271,3 +272,15 @@ and caller immutability remain supported. Parent inspected the eight-line normal
 All implementation handles stopped before acceptance. This coupled policy-input repair remains inside
 the same writer boundary. Next: fresh immutable incremental ordinary/API/security review, replacement
 exact-head CI on existing draft PR3, then authorized merge and Azure adapter slice.
+
+### Public writer transaction repair - 2026-10-14
+
+Shared workflow writer PR3 merged a2e04b07 from approved230fee5 with all5 checks green; all17 findings terminal. Source-owner B001 record-only PR4 merged d93b6ce47ae5dd585e84dc44f986497e9bba58f0 from e814659 after independent docs review and exact-head CI. Primary shared BUGS.md is retained/published. Temporary-only reproduction proves ordinary replacement deletion and cleanup-error masking in public write_files. Azure B003 separately merged f05693ec from reviewed9e90c28 after full Linux/Windows/host CI; its combined write transaction is independent.
+
+Current bounded branch Fix/WriterFileTransaction starts from fetched d93b6ce, isolated at .worktrees/Fix-WriterFileTransaction. Parent causal diagnosis: pathname-only rollback treats a replaced file as owned and uncaught cleanup errors mask WriteError. Repair live file/directory references, identity/type/redirect validation, all stream-close failure handling, retained-path reporting and contained cleanup; release all acquired resources without rollback after final success-release failure. Use duplicate file descriptors, POSIX directory descriptors and Windows directory handles without delete sharing. The directory-acquisition and final namespace-removal windows remain explicitly non-atomic. No new workflow/provider/config/options behavior, pin catalog or action resources in this repair. Azure composition,0b and later items remain separate.
+
+One exclusive L4 source writer owns canonical script/tests/generated mirrors. Parent owns goal/BUGS, severity/review, audits/Git/PR/delivery. Expected under600 authored changed lines; reassess actual measured diff before freezing. Focused regression tests must preserve foreign replacements and directory content, test final-close/acquisition/release/error paths and platform-specific lifetime/recreation behavior; full existing writer/release/lint matrix is remote. No cloud/application builds or extra native sessions. Next: implement/verify the bounded causal repair, audit/checkpoint, independent immutable correctness/security review and exact-head two-OS CI, merge/cleanup, then Azure composition.
+
+### Transaction acceptance - 2026-10-14
+
+Parent accepted the final authored 513 changed lines (script147/14, tests352/0): one creation/ownership/stream-close/rollback boundary, under600; generated mirrors excluded. Final captured focused suite passed28 tests with3 POSIX-only skips on Windows; actual Windows file/empty-directory handles deny replacement. All references survive output stream closes; unproved/redirected/foreign paths are retained and original errors remain chained. Success-release failures keep completed outputs and report release errors. Six pure render variants match d93b6ce byte for byte; AST uniqueness and72 generated-file freshness pass. Worker stopped all handles before parent acceptance. Scope assessment complete: no workflow graph/provider/pin/options behavior; separate bounded repair before Azure composition. Next: private staged audit/checkpoint, fresh immutable ordinary correctness and filesystem-security review, exact-head full Linux/Windows CI, then authorized merge/cleanup. B001 remains in-progress until those gates complete.

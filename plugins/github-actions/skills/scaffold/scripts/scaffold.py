@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import sys
 
 
@@ -820,7 +821,21 @@ def redirected(path: Path) -> bool:
     return path.is_symlink() or bool(getattr(attributes, "st_file_attributes", 0) & 0x400)
 
 
+def check_output_path(path: Path) -> None:
+    absolute = Path(os.path.abspath(path))
+    for entry in [*reversed(absolute.parents), absolute]:
+        try:
+            info = entry.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise WriteError(f"unsafe output path: {entry}")
+        if entry != absolute and not stat.S_ISDIR(info.st_mode):
+            raise WriteError(f"unsafe output parent: {entry}")
+
+
 def check_targets(project: Path, files: dict[str, str]) -> None:
+    check_output_path(project)
     if not project.is_dir() or redirected(project):
         raise WriteError("project must be an existing directory, not a symlink")
     conflicts = []
@@ -831,6 +846,7 @@ def check_targets(project: Path, files: dict[str, str]) -> None:
             raise InputError("case-insensitive output collision")
         folded.add(relative.casefold())
         target = project / relative
+        check_output_path(target)
         if os.path.lexists(target):
             conflicts.append(relative)
         for parent in target.parents:
@@ -842,35 +858,152 @@ def check_targets(project: Path, files: dict[str, str]) -> None:
         raise WriteError("already exists: " + ", ".join(sorted(conflicts)))
 
 
+def created_identity(info: os.stat_result) -> tuple[int, int] | None:
+    return (info.st_dev, info.st_ino) if info.st_ino else None
+
+
+def open_windows_directory(path: Path):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    handle = create(str(path.absolute()), 0x80000000, 0x00000003, None, 3, 0x02200000, None)
+    if handle == ctypes.c_void_p(-1).value or handle is None:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    def release():
+        if not close(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    return release
+
+
+class CreatedPath:
+    def __init__(self, path: Path, directory: bool = False):
+        self.path = path
+        self.directory = directory
+        self.identity: tuple[int, int] | None = None
+        self.descriptor: int | None = None
+        self.windows_release = None
+
+    def validate_type(self, info: os.stat_result) -> None:
+        valid = stat.S_ISDIR(info.st_mode) if self.directory else stat.S_ISREG(info.st_mode)
+        if not valid or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise WriteError(f"created output type changed: {self.path}")
+
+    def pin_file(self, descriptor: int) -> None:
+        self.descriptor = os.dup(descriptor)
+        info = os.fstat(self.descriptor)
+        self.validate_type(info)
+        self.identity = created_identity(info)
+
+    def pin_directory(self) -> None:
+        if os.name == "nt":
+            self.windows_release = open_windows_directory(self.path)
+            info = self.path.lstat()
+        else:
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            self.descriptor = os.open(self.path, flags)
+            info = os.fstat(self.descriptor)
+        self.validate_type(info)
+        self.identity = created_identity(info)
+        check_output_path(self.path)
+        current = self.path.lstat()
+        self.validate_type(current)
+        if self.identity is None or created_identity(current) != self.identity:
+            raise WriteError(f"created directory ownership could not be proved: {self.path}")
+
+    def release(self) -> None:
+        if self.descriptor is not None:
+            descriptor, self.descriptor = self.descriptor, None
+            os.close(descriptor)
+        if self.windows_release is not None:
+            release, self.windows_release = self.windows_release, None
+            release()
+
+    def remove(self) -> None:
+        check_output_path(self.path)
+        try:
+            info = self.path.lstat()
+        except FileNotFoundError:
+            return
+        self.validate_type(info)
+        if self.identity is None or created_identity(info) != self.identity:
+            raise WriteError(f"ownership changed or could not be proved: {self.path}")
+        if self.descriptor is not None:
+            live = os.fstat(self.descriptor)
+            self.validate_type(live)
+            if created_identity(live) != self.identity:
+                raise WriteError(f"ownership reference changed: {self.path}")
+        elif self.windows_release is None:
+            raise WriteError(f"ownership reference is not live: {self.path}")
+        if os.name == "nt":
+            self.release()
+        if self.directory:
+            self.path.rmdir()
+        else:
+            self.path.unlink()
+
+
+def release_created_paths(paths: list[CreatedPath]) -> list[Path]:
+    failed = []
+    for created in reversed(paths):
+        try:
+            created.release()
+        except OSError:
+            failed.append(created.path)
+    return failed
+
+
 def write_files(project: Path, files: dict[str, str]) -> None:
     check_targets(project, files)
-    written = []
-    directories = []
+    written: list[CreatedPath] = []
+    directories: list[CreatedPath] = []
     try:
         for relative, content in sorted(files.items()):
             target = project / relative
+            check_output_path(target)
             pending = []
             parent = target.parent
             while parent != project and not parent.exists():
                 pending.append(parent)
                 parent = parent.parent
             for parent in reversed(pending):
+                check_output_path(parent)
                 parent.mkdir()
-                directories.append(parent)
-            for parent in target.parents:
-                if parent == project:
-                    break
-                if redirected(parent):
-                    raise WriteError(f"unsafe output parent: {parent}")
+                created = CreatedPath(parent, directory=True)
+                directories.append(created)
+                created.pin_directory()
+            check_output_path(target)
             with target.open("xb") as stream:
-                written.append(target)
+                created = CreatedPath(target)
+                written.append(created)
+                created.pin_file(stream.fileno())
                 stream.write(content.replace("\r\n", "\n").encode("utf-8"))
     except (OSError, UnicodeError) as error:
-        for path in reversed(written):
-            path.unlink()
-        for path in reversed(directories):
-            path.rmdir()
-        raise WriteError(f"write failed; rolled back files created by this run: {error}") from error
+        retained = []
+        for created in [*reversed(written), *reversed(directories)]:
+            try:
+                created.remove()
+            except OSError:
+                retained.append(created.path)
+        failed_releases = release_created_paths([*directories, *written])
+        detail = f"; retained paths: {', '.join(map(str, retained))}" if retained else ""
+        if failed_releases:
+            detail += f"; could not release ownership references: {', '.join(map(str, failed_releases))}"
+        raise WriteError(f"write failed; rolled back files created by this run: {error}{detail}") from error
+    failed_releases = release_created_paths([*directories, *written])
+    if failed_releases:
+        raise WriteError(f"created outputs but could not release ownership references: {', '.join(map(str, failed_releases))}")
 
 
 def load_json(path: Path) -> dict:
