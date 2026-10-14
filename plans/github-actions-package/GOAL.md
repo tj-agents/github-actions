@@ -288,3 +288,33 @@ Parent accepted the final authored 513 changed lines (script147/14, tests352/0):
 ### WT-1 accepted repair - 2026-10-14
 
 Initial1400759 independent review retained one MEDIUM WT-1 after the parent temporary frozen-source probe confirmed two acquired references survived a caught interruption. Filesystem-security had no further concrete reachable defect. Initial all5 exact-head CI checks passed; Linux98 tests/2 Windows-only skips. Parent inspected and accepted the96-line authored fixing delta: source17/6 plus tests73/0. One finally attempts every acquired reference release on every exit; explicit local escaping-error state preserves original exception identity over release failures and avoids inherited caller exception context. New release interruptions still escape after remaining references are attempted, without rolling back completed outputs. Final focused30 tests ran successfully with3 POSIX-only skips;72-file freshness, AST uniqueness, Python3.9 syntax and whitespace pass. Worker stopped all handles. Total authored repair597 changed lines remains under600 in the same atomic transaction boundary. Next: immutable incremental correctness/security review and replacement exact-head CI on PR5 before merge; no provider/renderer changes.
+
+
+### OIDC CI build prerequisite - 2026-10-14
+
+B001 public transaction/WT1 delivered as PR5 merge5dbe9cc0, resolution PR6 mergee00dfd0; exact-head
+checks and independent reviews passed, owned checkouts cleaned. Azure item0 provider PR13 now exposes
+source-owned GHA B002: valid OIDC CI builds emit redundant constant-true job if rejected by generated
+Actions lint1.7.12. Canonical primary BUGS.md records observed source/CI evidence and resolution condition.
+Publish its separate bounded record-only review, then repair only condition emission and focused
+OIDC/verify/prod variants; preserve PR trust/readiness, prerequisite/build aggregation and production
+artifact behavior. L4 specified implementation: one exclusive available-model source writer, parent
+records/goal/audits/Git/frozen review/delivery. Expected under200 authored lines; no broader condition
+validation rewrite, linter suppression, unrelated provider or package-dependency change. After fresh
+independent review and exact-head CI, Azure adopts the immutable merged source in its existing PR13
+repair/delta. Azure provider source review continues over its already frozen ddadb2e. Original standards
+handoff remains owner through0b/rest. No local cloud/application/TF build or new native session.
+
+
+### OIDC CI build source accepted - 2026-10-14
+
+Exclusive source writer stopped. Parent inspected70 authored changed lines: CI OIDC environment and
+permissions stay, only PR OIDC build retains optional trust/readiness condition; CI build is a mandatory
+ci-complete prerequisite. Tests exercise2x2x2 privilege/verify/prod variants and actual Python
+aggregation success/failure/skip/cancellation; emitted lint fixtures now include OIDC builds with and
+without verify/prod. Writer102 tests passed with3 expected Windows POSIX skips, required Node gates active;
+72 generated freshness, Python3.9 AST/uniqueness/mirror parity and whitespace passed. Parent pinned
+Kit1.2.1 gate769596a639400b1c-oidc-frozen-kit.log passed. Authored renderer adds one branch line, no
+condition-validation/lint/pin changes. Record-only PR7 owns canonical B002 publication first. Initial
+source synchronization/freeze follows that merge, fresh independent native/security review and exact-head
+Linux/Windows emitted lint/hosts gates before source delivery. No local application/TF/cloud operation.
