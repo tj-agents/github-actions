@@ -1,5 +1,7 @@
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -1306,6 +1308,356 @@ class AtomicCliTests(unittest.TestCase):
         with self.assertRaises(scaffold.WriteError):
             scaffold.write_files(self.project, {"new/file": "x"})
         self.assertEqual("existing", (self.project / "new").read_text(encoding="utf-8"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX allows replacing pinned paths")
+    def test_file_replacement_survives_rollback_with_original_identity_live(self):
+        for operation in ("rename", "unlink"):
+            with self.subTest(operation=operation):
+                first = self.project / "first"
+                original_open = Path.open
+                original_dup = os.dup
+                pins = []
+                def duplicate(descriptor):
+                    pin = original_dup(descriptor)
+                    pins.append(pin)
+                    return pin
+                def fail(path, mode="r", *args, **kwargs):
+                    if path.name == "second" and mode == "xb":
+                        identity = os.fstat(pins[0])
+                        if operation == "rename":
+                            first.rename(self.project / "moved")
+                        else:
+                            first.unlink()
+                            self.assertEqual(0, os.fstat(pins[0]).st_nlink)
+                        first.write_text("foreign", encoding="utf-8")
+                        self.assertNotEqual(identity.st_ino, first.stat().st_ino)
+                        self.assertEqual(identity.st_ino, os.fstat(pins[0]).st_ino)
+                        raise OSError("later write failed")
+                    return original_open(path, mode, *args, **kwargs)
+                with patch.object(Path, "open", fail), patch.object(os, "dup", duplicate), self.assertRaises(scaffold.WriteError) as caught:
+                    scaffold.write_files(self.project, {"first": "owned", "second": "later"})
+                self.assertIn("later write failed", str(caught.exception))
+                self.assertIn(str(first), str(caught.exception))
+                self.assertEqual("foreign", first.read_text(encoding="utf-8"))
+                for descriptor in pins:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                first.unlink()
+                moved = self.project / "moved"
+                if moved.exists():
+                    self.assertEqual("owned", moved.read_text(encoding="utf-8"))
+                    moved.unlink()
+
+    @unittest.skipIf(os.name == "nt", "POSIX allows replacing pinned directories")
+    def test_empty_directory_replacement_survives_with_original_identity_live(self):
+        for operation in ("rename", "rmdir"):
+            with self.subTest(operation=operation):
+                directory = self.project / "new"
+                original_open = Path.open
+                original_pin = scaffold.CreatedPath.pin_directory
+                pins = []
+                def pin(created):
+                    original_pin(created)
+                    pins.append(created.descriptor)
+                def fail(path, mode="r", *args, **kwargs):
+                    if path.name == "second" and mode == "xb":
+                        identity = os.fstat(pins[0])
+                        if operation == "rename":
+                            directory.rename(self.project / "moved")
+                        else:
+                            (directory / "first").unlink()
+                            directory.rmdir()
+                            self.assertEqual(0, os.fstat(pins[0]).st_nlink)
+                        directory.mkdir()
+                        self.assertNotEqual(identity.st_ino, directory.stat().st_ino)
+                        self.assertEqual(identity.st_ino, os.fstat(pins[0]).st_ino)
+                        raise OSError("later write failed")
+                    return original_open(path, mode, *args, **kwargs)
+                with patch.object(Path, "open", fail), patch.object(scaffold.CreatedPath, "pin_directory", pin), self.assertRaises(scaffold.WriteError) as caught:
+                    scaffold.write_files(self.project, {"new/first": "owned", "new/second": "later"})
+                self.assertIn(str(directory), str(caught.exception))
+                self.assertTrue(directory.is_dir())
+                self.assertEqual([], list(directory.iterdir()))
+                for descriptor in pins:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+                directory.rmdir()
+                moved = self.project / "moved"
+                if moved.exists():
+                    self.assertEqual("owned", (moved / "first").read_text(encoding="utf-8"))
+                    shutil.rmtree(moved)
+
+    @unittest.skipUnless(os.name == "nt", "Windows denies deletion while ownership handles are held")
+    def test_windows_live_file_and_empty_directory_pins_deny_replacement(self):
+        original_open = Path.open
+        def fail(path, mode="r", *args, **kwargs):
+            if mode == "xb" and path.name == "first":
+                directory = path.parent
+                with self.assertRaises(OSError):
+                    directory.rmdir()
+                with self.assertRaises(OSError):
+                    directory.rename(self.project / "moved-directory")
+            if mode == "xb" and path.name == "second":
+                first = path.parent / "first"
+                with self.assertRaises(OSError):
+                    first.unlink()
+                with self.assertRaises(OSError):
+                    first.rename(self.project / "moved-file")
+                self.assertEqual("owned", first.read_text(encoding="utf-8"))
+                raise OSError("later write failed")
+            return original_open(path, mode, *args, **kwargs)
+        with patch.object(Path, "open", fail), self.assertRaises(scaffold.WriteError):
+            scaffold.write_files(self.project, {"new/first": "owned", "new/second": "later"})
+        self.assertEqual([], list(self.project.iterdir()))
+
+    def test_foreign_directory_content_retains_original_write_diagnostic(self):
+        original_open = Path.open
+        foreign = self.project / "new/foreign"
+        def fail(path, mode="r", *args, **kwargs):
+            if path.name == "second" and mode == "xb":
+                foreign.write_text("foreign", encoding="utf-8")
+                raise OSError("original disk failure")
+            return original_open(path, mode, *args, **kwargs)
+        with patch.object(Path, "open", fail), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"new/first": "owned", "new/second": "later"})
+        self.assertIn("original disk failure", str(caught.exception))
+        self.assertIn("retained paths", str(caught.exception))
+        self.assertEqual([foreign], list(foreign.parent.iterdir()))
+        self.assertEqual("foreign", foreign.read_text(encoding="utf-8"))
+
+    def test_parent_conflict_discovered_during_write_rolls_back_owned_files(self):
+        original_open = Path.open
+        foreign = self.project / "zblocked"
+        def open_stream(path, mode="r", *args, **kwargs):
+            if path.name == "first" and mode == "xb":
+                foreign.write_text("foreign", encoding="utf-8")
+            return original_open(path, mode, *args, **kwargs)
+        with patch.object(Path, "open", open_stream), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"first": "owned", "zblocked/second": "later"})
+        self.assertIn("unsafe output parent", str(caught.exception))
+        self.assertEqual([foreign], list(self.project.iterdir()))
+        self.assertEqual("foreign", foreign.read_text(encoding="utf-8"))
+
+    def test_partial_write_and_each_stream_close_failure_roll_back(self):
+        original_open = Path.open
+        original_dup = os.dup
+        for failure in ("write", "first-close", "final-close"):
+            with self.subTest(failure=failure):
+                pins = []
+                def duplicate(descriptor):
+                    pin = original_dup(descriptor)
+                    pins.append(pin)
+                    return pin
+                class Stream:
+                    def __init__(self, stream, name):
+                        self.stream, self.name = stream, name
+                    def __enter__(self):
+                        return self
+                    def fileno(self):
+                        return self.stream.fileno()
+                    def write(self, content):
+                        if failure == "write":
+                            self.stream.write(content[:1])
+                            raise OSError("partial write failed")
+                        return self.stream.write(content)
+                    def __exit__(self, *args):
+                        self.stream.close()
+                        for descriptor in pins:
+                            os.fstat(descriptor)
+                        if (failure, self.name) in (("first-close", "first"), ("final-close", "second")):
+                            raise OSError("stream close failed")
+                def open_stream(path, mode="r", *args, **kwargs):
+                    stream = original_open(path, mode, *args, **kwargs)
+                    return Stream(stream, path.name) if mode == "xb" else stream
+                with patch.object(Path, "open", open_stream), patch.object(os, "dup", duplicate), self.assertRaises(scaffold.WriteError):
+                    scaffold.write_files(self.project, {"new/first": "one", "new/second": "two"})
+                self.assertEqual([], list(self.project.iterdir()))
+                for descriptor in pins:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+
+    def test_failed_file_pin_or_identity_keeps_unproved_output_and_releases_pins(self):
+        for failure in ("dup", "fstat", "identity"):
+            with self.subTest(failure=failure):
+                pins = []
+                original_dup = os.dup
+                original_fstat = os.fstat
+                def duplicate(descriptor):
+                    pin = original_dup(descriptor)
+                    pins.append(pin)
+                    return pin
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.object(os, "dup", side_effect=OSError("dup failed")) if failure == "dup" else patch.object(os, "dup", duplicate))
+                    if failure == "fstat":
+                        stack.enter_context(patch.object(os, "fstat", side_effect=OSError("identity probe failed")))
+                    if failure == "identity":
+                        stack.enter_context(patch.object(scaffold, "created_identity", return_value=None))
+                    with self.assertRaises(scaffold.WriteError) as caught:
+                        scaffold.write_files(self.project, {"first": "\ud800" if failure == "identity" else "one"})
+                first = self.project / "first"
+                self.assertTrue(first.exists())
+                self.assertIn(str(first), str(caught.exception))
+                for descriptor in pins:
+                    with self.assertRaises(OSError):
+                        original_fstat(descriptor)
+                first.unlink()
+
+    def test_directory_pin_failure_keeps_unproved_directory(self):
+        method = "open_windows_directory" if os.name == "nt" else "open"
+        owner = scaffold if os.name == "nt" else os
+        with patch.object(owner, method, side_effect=OSError("directory pin failed")), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"new/first": "owned"})
+        directory = self.project / "new"
+        self.assertIn("directory pin failed", str(caught.exception))
+        self.assertIn(str(directory), str(caught.exception))
+        self.assertTrue(directory.is_dir())
+        self.assertEqual([], list(directory.iterdir()))
+
+    def test_success_and_failure_release_all_acquired_references_once(self):
+        original_release = scaffold.CreatedPath.release
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                released = []
+                def release(created):
+                    if created.descriptor is not None or created.windows_release is not None:
+                        released.append(created.path)
+                    original_release(created)
+                with patch.object(scaffold.CreatedPath, "release", release):
+                    if failed:
+                        with self.assertRaises(scaffold.WriteError):
+                            scaffold.write_files(self.project, {"new/first": "one", "new/second": "\ud800"})
+                    else:
+                        scaffold.write_files(self.project, {"new/first": "one", "new/second": "two"})
+                self.assertCountEqual([self.project / "new", self.project / "new/first", self.project / "new/second"], released)
+                self.assertEqual(3, len(released))
+                if not failed:
+                    shutil.rmtree(self.project / "new")
+                else:
+                    self.assertEqual([], list(self.project.iterdir()))
+
+    def test_failed_directory_ownership_probe_releases_reference_and_retains_directory(self):
+        original_release = scaffold.CreatedPath.release
+        released = []
+        def release(created):
+            if created.descriptor is not None or created.windows_release is not None:
+                released.append(created.path)
+            original_release(created)
+        with patch.object(scaffold, "created_identity", return_value=None), patch.object(scaffold.CreatedPath, "release", release), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"new/first": "one"})
+        directory = self.project / "new"
+        self.assertIn("ownership could not be proved", str(caught.exception))
+        self.assertEqual([directory], released)
+        self.assertEqual([], list(directory.iterdir()))
+        directory.rmdir()
+
+    @unittest.skipUnless(os.name == "nt", "Windows directory ownership uses native handles")
+    def test_windows_directory_handle_close_failure_is_contained_and_attempted_once(self):
+        original_open = scaffold.open_windows_directory
+        released = []
+        def open_directory(path):
+            original_release = original_open(path)
+            def release():
+                original_release()
+                released.append(path)
+                raise OSError("directory handle close failed")
+            return release
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                released.clear()
+                with patch.object(scaffold, "open_windows_directory", open_directory), self.assertRaises(scaffold.WriteError) as caught:
+                    scaffold.write_files(self.project, {"new/first": "\ud800" if failed else "one"})
+                directory = self.project / "new"
+                self.assertEqual([directory], released)
+                if failed:
+                    self.assertIsInstance(caught.exception.__cause__, UnicodeError)
+                    self.assertEqual([], list(directory.iterdir()))
+                    self.assertIn("retained paths", str(caught.exception))
+                else:
+                    self.assertEqual("one", (directory / "first").read_text(encoding="utf-8"))
+                    self.assertIn("created outputs", str(caught.exception))
+                    self.assertIn("could not release ownership references", str(caught.exception))
+                shutil.rmtree(directory)
+
+    def test_release_error_after_success_keeps_all_completed_outputs(self):
+        original_close = os.close
+        closed = []
+        def close(descriptor):
+            original_close(descriptor)
+            closed.append(descriptor)
+            if len(closed) == 2:
+                raise OSError("release failed")
+        with patch.object(os, "close", close), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"first": "one", "second": "two", "third": "three"})
+        self.assertIn("created outputs", str(caught.exception))
+        self.assertIn("could not release ownership references", str(caught.exception))
+        self.assertEqual(3, len(closed))
+        self.assertEqual(["one", "two", "three"], [(self.project / name).read_text(encoding="utf-8") for name in ("first", "second", "third")])
+
+    def test_cleanup_release_error_does_not_mask_original_write_failure(self):
+        original_close = os.close
+        closed = []
+        def close(descriptor):
+            original_close(descriptor)
+            closed.append(descriptor)
+            raise OSError("release failed")
+        with patch.object(os, "close", close), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"first": "one", "second": "\ud800"})
+        self.assertIsInstance(caught.exception.__cause__, UnicodeError)
+        self.assertEqual(2, len(closed))
+        if os.name == "nt":
+            self.assertIn("retained paths", str(caught.exception))
+        else:
+            self.assertIn("could not release ownership references", str(caught.exception))
+            self.assertEqual([], list(self.project.iterdir()))
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlinks need no elevated privilege")
+    def test_redirected_ancestor_is_rejected_before_write_and_during_rollback(self):
+        outside = Path(self.temporary.name) / "outside"
+        outside.mkdir()
+        link = self.project / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(scaffold.WriteError):
+            scaffold.write_files(self.project, {"link/file": "owned"})
+        link.unlink()
+        alias = Path(self.temporary.name) / "alias"
+        alias.symlink_to(self.project, target_is_directory=True)
+        with self.assertRaises(scaffold.WriteError):
+            scaffold.write_files(alias, {"file": "owned"})
+        (self.project / "nested").mkdir()
+        with self.assertRaises(scaffold.WriteError):
+            scaffold.write_files(alias / "nested", {"file": "owned"})
+        original_open = Path.open
+        foreign = outside / "first"
+        foreign.write_text("foreign", encoding="utf-8")
+        def fail(path, mode="r", *args, **kwargs):
+            if path.name == "second" and mode == "xb":
+                self.project.rename(Path(self.temporary.name) / "moved")
+                self.project.symlink_to(outside, target_is_directory=True)
+                raise scaffold.WriteError("redirect discovered while writing")
+            return original_open(path, mode, *args, **kwargs)
+        with patch.object(Path, "open", fail), self.assertRaises(scaffold.WriteError) as caught:
+            scaffold.write_files(self.project, {"first": "owned", "second": "later"})
+        self.assertIn("redirect discovered while writing", str(caught.exception))
+        self.assertIn("retained paths", str(caught.exception))
+        self.assertEqual("foreign", foreign.read_text(encoding="utf-8"))
+        self.project.unlink()
+
+    def test_cli_contains_write_and_cleanup_failures_as_exit_one(self):
+        original_open = Path.open
+        foreign = self.project / "new/foreign"
+        def fail(path, mode="r", *args, **kwargs):
+            if path.name == "second" and mode == "xb":
+                foreign.write_text("foreign", encoding="utf-8")
+                raise scaffold.WriteError("original writer failure")
+            return original_open(path, mode, *args, **kwargs)
+        stderr = io.StringIO()
+        with patch.object(scaffold, "render", return_value={"new/first": "one", "new/second": "two"}), patch.object(Path, "open", fail), contextlib.redirect_stderr(stderr):
+            code = scaffold.main(["new", "--config", str(self.config), "--project", str(self.project)])
+        self.assertEqual(1, code)
+        self.assertIn("error: write failed", stderr.getvalue())
+        self.assertIn("original writer failure", stderr.getvalue())
+        self.assertIn("retained paths", stderr.getvalue())
+        self.assertEqual("foreign", foreign.read_text(encoding="utf-8"))
 
 
 class GateBehaviorTests(unittest.TestCase):
