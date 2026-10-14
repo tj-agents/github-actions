@@ -17,3 +17,15 @@
 - **Interruption repair verification:** independent WT-1 identified exceptional exits retaining raw references. Parent confirmed with disposable frozen-source files and accepted unconditional release with original exception preservation. Final focused30 tests ran with3 POSIX-only skips; write/close/release interruptions and an importing caller's surrounding handled exception are covered. Fresh fixing-delta review and replacement exact-head Linux/Windows checks remain before resolution.
 
 - **Delivery verification (2026-10-14):** PR5 merged5dbe9cc09799911ed896c2e35007167d41d2d853 from approved4497cf7bc100ee2f7e5279ce7d226e0120324316. Fresh independent correctness/filesystem-security fixing reviews found no remaining concrete defect; all5 exact-head checks in38492948885/38492949122 passed. Linux100 tests/2 Windows-only skips and Windows writer/host jobs passed. Parent verified the actual merged state, preserved primary record notes before fast-forward, released the exact binding and removed the source checkout/branch. Portable acquisition/final pathname race limits remain explicit.
+
+## B002 - OIDC CI build emits a constant condition
+
+- **Kind:** bug
+- **Observed/reported:** 2026-10-14. Azure provider PR13 at ddadb2ef9eb6180502e07ce0d270de45a2419ac3 composes shared writer e00dfd03771cf9416dbe9136e59c221c6feea43e with a valid OIDC build. Exact-head Terraform run38545025023 Actions Lint rejects generated ci.yml:142:11, constant expression true in condition. Both Terraform scaffold operating systems and all Kit/host checks pass. Confirmed cause: render_documents sets cloud_condition to literal true for the ci event and unconditionally emits jobs.build.if=expr(cloud_condition) for OIDC builds; the resulting redundant if is rejected by actionlint1.7.12.
+- **Impact and priority:** P2; valid cloud build configurations produce workflows that fail the mandatory emitted lint gate. No cloud operation was executed.
+- **Source owner:** tj-agents/github-actions, pure scaffold renderer CI build-job condition emission.
+- **State:** recorded
+- **Repair link:** BUGS.md#B002 under canonical standards-finish handoff item0; distinct from Azure B002 resource-name repair.
+- **Next action:** bounded renderer repair that omits only the redundant CI build condition and preserves PR trust/readiness, prerequisite success, artifact aggregation and production semantics; independent review and exact-head CI before immutable Azure adoption.
+- **Resolution condition:** OIDC/non-OIDC, present/empty verify and prod-release variants produce lint-valid CI build jobs without constant conditions; PR cloud trust/readiness guards and successful-build aggregation remain, complete generated freshness and two-OS lint/host gates pass.
+- **Verification evidence:** exact generated error observed in Actions Lint run38545025023; immutable shared source inspected at e00dfd03771cf9416dbe9136e59c221c6feea43e, cloud_condition assignment and OIDC build if emission. Existing writer lint fixtures did not exercise this OIDC build branch. No unrelated Azure source, generic condition-validation exemption or linter suppression is an appropriate repair.
