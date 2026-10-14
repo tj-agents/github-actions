@@ -29,17 +29,21 @@ def main():
     with tempfile.TemporaryDirectory(prefix="workflow-writer-") as temporary:
         project = Path(temporary)
         scaffold.write_files(project, scaffold.render(config, metadata))
-        variants = {name: copy.deepcopy(config) for name in ("no-build", "prod-off", "production-matrix")}
+        variants = {name: copy.deepcopy(config) for name in ("no-build", "prod-off", "production-matrix", "oidc-build", "oidc-build-no-verify")}
         variants["no-build"].pop("build", None)
         variants["prod-off"]["prod-release"] = False
         variants["production-matrix"]["provider"]["environments"] = {"ci": "ci", "preview": "preview", "prod": ["east-prod", "west-prod"]}
+        variants["oidc-build"]["build"]["oidc"] = True
+        variants["oidc-build-no-verify"]["build"]["oidc"] = True
+        variants["oidc-build-no-verify"]["verify"] = {}
+        variants["oidc-build-no-verify"]["prod-release"] = False
         for name, variant in variants.items():
             for path, content in scaffold.render(variant, metadata).items():
                 if path.startswith(".github/workflows/"):
                     (project / ".github/workflows" / f"{name}-{Path(path).name}").write_text(content, encoding="utf-8")
         (project / ".github/workflows/writer-check.yml").write_text((ROOT / ".github/workflows/workflow-writer.yml").read_text(encoding="utf-8"), encoding="utf-8")
         subprocess.run([sys.executable, "-B", str(project / ".github/scripts/lint-workflows.py")], cwd=project, check=True)
-    print("Emitted full, no-build, prod-off and production-matrix workflows, composites and writer CI pass actionlint and zizmor.")
+    print("Emitted full, no-build, prod-off, production-matrix and OIDC build workflows, composites and writer CI pass actionlint and zizmor.")
     return 0
 
 

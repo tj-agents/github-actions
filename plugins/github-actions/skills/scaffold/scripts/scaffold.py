@@ -705,6 +705,7 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
             if build["oidc"]:
                 jobs["build"]["environment"] = environments["ci"]
                 jobs["build"]["env"] = {"DEPLOY_ENVIRONMENT": environments["ci"], "PREVIEW_NUMBER": expr("github.event.pull_request.number") if event == "pr" else "", "SOURCE_SHA": expr("github.sha"), "SOURCE_RUN_ID": expr("github.run_id")}
+            if build["oidc"] and event == "pr":
                 jobs["build"]["if"] = expr(cloud_condition)
                 optional["build"] = cloud_condition
             else:
