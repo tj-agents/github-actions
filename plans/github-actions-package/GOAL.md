@@ -310,7 +310,7 @@ handoff remains owner through0b/rest. No local cloud/application/TF build or new
 
 Exclusive source writer stopped. Parent inspected70 authored changed lines: CI OIDC environment and
 permissions stay, only PR OIDC build retains optional trust/readiness condition; CI build is a mandatory
-ci-complete prerequisite. Tests exercise2x2x2 privilege/verify/prod variants and actual JavaScript
+ci-complete prerequisite. Tests exercise2x2x2 privilege/verify/prod variants and actual Python
 aggregation success/failure/skip/cancellation; emitted lint fixtures now include OIDC builds with and
 without verify/prod. Writer102 tests passed with3 expected Windows POSIX skips, required Node gates active;
 72 generated freshness, Python3.9 AST/uniqueness/mirror parity and whitespace passed. Parent pinned
