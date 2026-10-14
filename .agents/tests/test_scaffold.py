@@ -528,11 +528,58 @@ class RenderingTests(unittest.TestCase):
         ci = docs[".github/workflows/ci.yml"]["jobs"]
         pr = docs[".github/workflows/pr.yml"]["jobs"]
         self.assertNotIn("FOUNDATION_READY", ci["deploy-ci"]["if"])
-        self.assertNotIn("FOUNDATION_READY", ci["build"]["if"])
+        self.assertNotIn("if", ci["build"])
         self.assertIn("FOUNDATION_READY", pr["plan"]["if"])
         self.assertNotIn("deploy-preview", pr["recover-preview"]["if"])
         self.assertEqual("ephemeral", pr["deploy-preview"]["with"]["environment"])
         self.assertEqual("production", docs[".github/workflows/prod.yml"]["jobs"]["deploy-prod"]["with"]["environment"])
+
+    def test_build_guards_and_required_gates_cover_privilege_verification_and_release_modes(self):
+        for oidc in (False, True):
+            for verification in (False, True):
+                for prod_release in (False, True):
+                    with self.subTest(oidc=oidc, verification=verification, prod_release=prod_release):
+                        config = fixture()
+                        config["build"]["oidc"] = oidc
+                        config["provider"]["ready"] = "vars.FOUNDATION_READY == 'true'"
+                        config["provider"]["environments"] = {"ci": "protected-ci"}
+                        config["prod-release"] = prod_release
+                        if not verification:
+                            config["verify"] = {}
+                        prerequisites = (["verify-unit", "verify-integration"] if verification else []) + ["lint", "validate"]
+                        _, docs = scaffold.render_documents(config)
+                        self.assertEqual(prod_release, ".github/workflows/prod.yml" in docs)
+                        for event in ("pr", "ci"):
+                            jobs = docs[f".github/workflows/{event}.yml"]["jobs"]
+                            build = jobs["build"]
+                            optional_build = oidc and event == "pr"
+                            self.assertEqual(prerequisites, build["needs"])
+                            self.assertEqual({"contents": "read", **({"id-token": "write"} if oidc else {})}, build["permissions"])
+                            if optional_build:
+                                guard = scaffold.expr(scaffold.TRUSTED + " && " + config["provider"]["ready"])
+                                self.assertEqual(guard, build["if"])
+                                self.assertEqual(guard, jobs["cloud-gates"]["steps"][0]["env"]["BUILD"])
+                            else:
+                                self.assertNotIn("if", build)
+                                self.assertNotIn("BUILD", jobs["cloud-gates"]["steps"][0]["env"])
+                            mandatory = prerequisites + ([] if optional_build else ["build"]) + ["cloud-gates"]
+                            self.assertEqual(mandatory, jobs["ci-complete"]["needs"])
+                            self.assertEqual("always()", jobs["ci-complete"]["if"])
+                            cloud_needs = (["build"] if optional_build else []) + (["plan", "deploy-preview"] if event == "pr" else ["deploy-ci"])
+                            self.assertEqual(cloud_needs, jobs["cloud-gates"]["needs"])
+                            deployment = jobs["deploy-preview" if event == "pr" else "deploy-ci"]
+                            self.assertEqual(prerequisites + ["build"] + (["plan"] if event == "pr" else []), deployment["needs"])
+                            self.assertIn("needs.build.result == 'success'", deployment["if"])
+                            self.assertEqual("${{ needs.build.outputs.artifact-id }}", deployment["with"]["artifact-id"])
+                            self.assertEqual("${{ steps.artifact.outputs.artifact-id }}", build["outputs"]["artifact-id"])
+                            upload = build["steps"][-1]
+                            self.assertEqual("deployment", upload["with"]["name"])
+                            self.assertEqual("error", upload["with"]["if-no-files-found"])
+                            if oidc:
+                                self.assertEqual("protected-ci", build["environment"])
+                                self.assertEqual({"DEPLOY_ENVIRONMENT": "protected-ci", "PREVIEW_NUMBER": "${{ github.event.pull_request.number }}" if event == "pr" else "", "SOURCE_SHA": "${{ github.sha }}", "SOURCE_RUN_ID": "${{ github.run_id }}"}, build["env"])
+                            else:
+                                self.assertNotIn("environment", build)
 
     def test_removed_preview_label_does_not_prevent_trusted_ready_close_cleanup(self):
         config = fixture()
@@ -1748,6 +1795,18 @@ class GateBehaviorTests(unittest.TestCase):
             with self.subTest(selected=selected, status=status):
                 result = self.run_gate("optional-gates.sh", {"deploy-preview": {"result": status}}, {"DEPLOY_PREVIEW": selected})
                 self.assertEqual(code, result.returncode)
+
+    def test_oidc_ci_build_cannot_skip_fail_or_cancel_its_required_gate(self):
+        config = fixture()
+        config["build"]["oidc"] = True
+        _, docs = scaffold.render_documents(config)
+        gate = docs[".github/workflows/ci.yml"]["jobs"]["ci-complete"]
+        self.assertIn("build", gate["needs"])
+        results = {name: {"result": "success"} for name in gate["needs"]}
+        for status, expected in (("success", 0), ("skipped", 1), ("failure", 1), ("cancelled", 1)):
+            with self.subTest(status=status):
+                results["build"]["result"] = status
+                self.assertEqual(expected, self.run_gate("aggregate.sh", results).returncode)
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is required to execute the mocked preview lifecycle")
