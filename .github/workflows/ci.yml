@@ -7,8 +7,8 @@ on:
 
 jobs:
   verify:
-    uses: tj-agents/template/.github/workflows/plugin-ci.yml@v1.6.2
+    uses: tj-agents/template/.github/workflows/plugin-ci.yml@v2.0.0
     with:
-      kit_ref: v1.6.2
+      template_ref: v2.0.0
     secrets:
       read_token: ${{ secrets.TJ_AGENTS_READ_TOKEN }}

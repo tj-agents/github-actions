@@ -16,7 +16,7 @@ import shutil
 import stat
 
 
-TEMPLATE_VERSION = "1.6.2"
+TEMPLATE_VERSION = "2.0.0"
 FRONTMATTER = re.compile(r"\A---\n(?P<header>.*?)\n---\n(?P<body>.*)\Z", re.DOTALL)
 NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 KIND = re.compile(r"^[a-z]+$")
@@ -99,7 +99,7 @@ def load_config(root: Path) -> dict:
     if config.get("template") != TEMPLATE_VERSION:
         raise ValueError(
             f".agents/plugins/template.json pins Template {config.get('template')} but this generator is Template {TEMPLATE_VERSION}; "
-            "run template:update (kit:update for legacy Kit installations)"
+            "run template:update"
         )
     if config.get("type") not in REPOSITORY_TYPES:
         raise ValueError(f".agents/plugins/template.json: type must be one of {', '.join(REPOSITORY_TYPES)}")
