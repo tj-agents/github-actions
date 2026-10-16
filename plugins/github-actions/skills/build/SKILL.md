@@ -11,13 +11,5 @@ provenance: house
 
 # GitHub Actions build
 
-Owns runners, toolchain versions and caching.
-
-## Agreed
-
-- Jobs run on GitHub-hosted `ubuntu-latest` by default; a matrix adds `windows-latest` only for a
-  cross-platform product.
-- Toolchain versions come from repository files (`global-json-file`, `node-version-file`,
-  `packageManager`), never from numbers duplicated in YAML. Terraform's version is pinned exactly.
-- Dependency caching uses the setup actions' built-in `cache:`; `actions/cache` only covers what they
-  cannot.
+Read and follow the [canonical definition](../../.agents/github-actions/contract/build/SKILL.md) in full.
+This discovery entry is generated; edit the referenced `.agents/` definition.

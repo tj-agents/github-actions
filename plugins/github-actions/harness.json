@@ -13,11 +13,17 @@
       {
         "id": "base-agents",
         "repository": "tj-agents/core"
+      },
+      {
+        "id": "tj-agents",
+        "repository": "tj-agents/marketplace"
       }
     ],
     "plugins": [
       "github-actions-agents/github-actions",
-      "base-agents/base"
+      "tj-agents/base",
+      "tj-agents/engineering",
+      "tj-agents/machine"
     ],
     "hooks": [],
     "permissions": {

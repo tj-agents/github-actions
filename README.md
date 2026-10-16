@@ -23,6 +23,6 @@ python -B .agents/sync_generated.py --root .
 python -B .agents/sync_generated.py --root . --check
 ```
 
-The layout, vendored generator and base CI come from [kit](https://github.com/tj-agents/kit).
+The layout, vendored generator and base CI come from [Template](https://github.com/tj-agents/template).
 The additional writer verification runs on Windows and Ubuntu; it lints emitted workflows and executes
 release assertions against a mocked GitHub API without running app/cloud toolchains.
