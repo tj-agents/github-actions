@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "kit": "1.2.1",
   "repository": "tj-agents/github-actions",
-  "type": "stack"
+  "type": "stack",
+  "template": "1.6.2"
 }
