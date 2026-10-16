@@ -7,5 +7,15 @@
   },
   "repository": "https://github.com/tj-agents/github-actions",
   "skills": "./skills/",
-  "keywords": ["github-actions", "ci", "cd", "workflows"]
+  "keywords": [
+    "github-actions",
+    "ci",
+    "cd",
+    "workflows"
+  ],
+  "dependencies": [
+    "base@tj-agents",
+    "engineering@tj-agents",
+    "machine@tj-agents"
+  ]
 }

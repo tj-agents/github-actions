@@ -11,11 +11,5 @@ provenance: house
 
 # GitHub Actions libraries
 
-Owns which actions to depend on and how they are kept current.
-
-## Agreed
-
-- Prefer first-party `actions/*`, then the vendor's own action (`azure/*`, `docker/*`, `hashicorp/*`). A
-  community action needs a reason, and a short script beats a single-purpose marketplace action. Use
-  `actions/github-script` for GitHub API calls.
-- `.github/dependabot.yml` updates the `github-actions` ecosystem weekly in one grouped pull request.
+Read and follow the [canonical definition](../../.agents/github-actions/contract/libraries/SKILL.md) in full.
+This discovery entry is generated; edit the referenced `.agents/` definition.
