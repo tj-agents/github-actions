@@ -1,11 +1,11 @@
 # github-actions
 
-This repository uses the plugin layout `kit:check` documents and enforces
-(https://github.com/tj-agents/kit). Authored skills live once under `.agents/<plugin>/<kind>/<name>/SKILL.md`,
+This repository uses the plugin layout `template:check` documents and enforces
+(https://github.com/tj-agents/template). Authored skills live once under `.agents/<plugin>/<kind>/<name>/SKILL.md`,
 with each skill's scripts and templates beside it; related skills share a family folder, family first
 (`state/client/` publishes `state-client`). `.agents/sync_generated.py`, `.agents/sync-generated.ps1`,
-`.gitattributes`, `.gitignore`, `CLAUDE.md` and `.github/workflows/ci.yml` are vendored from kit and pinned by
-`.agents/plugins/kit.json`: change them in kit, then run `kit:update`.
+`.gitattributes`, `.gitignore`, `CLAUDE.md` and `.github/workflows/ci.yml` are vendored from Template and pinned by
+`.agents/plugins/template.json`: change them in Template, then run `template:update`.
 
 `.codex/skills/`, `.claude/skills/`, `.agents/INDEX.md`, both marketplace files and `plugins/*` are generated. Run
 `pwsh .agents/sync-generated.ps1` after authored changes and require `pwsh .agents/sync-generated.ps1 -Check`

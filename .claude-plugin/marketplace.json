@@ -17,5 +17,8 @@
         "workflows"
       ]
     }
+  ],
+  "allowCrossMarketplaceDependenciesOn": [
+    "tj-agents"
   ]
 }

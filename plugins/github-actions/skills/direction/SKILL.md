@@ -11,29 +11,5 @@ provenance: house
 
 # Where Tommy is headed with GitHub Actions
 
-`github-actions:knowledge` tracks where Tommy is now; this tracks where they are going.
-
-## The goal
-
-_Not set yet._ Agree it with Tommy before the first lesson.
-
-## The skill tree
-
-| # | Area | Status |
-|---|------|--------|
-
-Update a row's status when Tommy levels up an area.
-
-## The rule
-
-These projects are for learning, not output. A slower path that Tommy understands beats a fast one they do
-not. Check that it landed: ask them to explain it back, or to write the next piece before you show yours.
-
-## References
-
-- GitHub Actions documentation, docs.github.com/actions, including its secure-use reference
-- GitHub changelog, github.blog/changelog
-- actionlint, github.com/rhysd/actionlint
-- zizmor, docs.zizmor.sh
-
-Explanations and conventions cite only the references listed here.
+Read and follow the [canonical definition](../../.agents/github-actions/knowledge/direction/SKILL.md) in full.
+This discovery entry is generated; edit the referenced `.agents/` definition.
