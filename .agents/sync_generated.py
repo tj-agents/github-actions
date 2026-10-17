@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a plugin repository's host discovery entries, marketplaces and installable payloads.
-
-Vendored from the Template repository and pinned by `.agents/plugins/template.json`: change it in Template, never here.
-"""
+"""Generate a plugin repository's host discovery entries, marketplaces and installable payloads."""
 
 from __future__ import annotations
 
@@ -16,12 +13,10 @@ import shutil
 import stat
 
 
-TEMPLATE_VERSION = "2.0.0"
 FRONTMATTER = re.compile(r"\A---\n(?P<header>.*?)\n---\n(?P<body>.*)\Z", re.DOTALL)
 NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 KIND = re.compile(r"^[a-z]+$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/([a-z][a-z0-9-]*)$")
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 BARE_SKILL_REFERENCE = re.compile(r"`([a-z][a-z0-9-]+)`\s+skill(?:'s)?")
@@ -96,17 +91,12 @@ def load_config(root: Path) -> dict:
         raise ValueError(".agents/plugins/template.json: must be a JSON object")
     if config.get("schema_version") != 1:
         raise ValueError(".agents/plugins/template.json: schema_version must be 1")
-    if config.get("template") != TEMPLATE_VERSION:
-        raise ValueError(
-            f".agents/plugins/template.json pins Template {config.get('template')} but this generator is Template {TEMPLATE_VERSION}; "
-            "run template:update"
-        )
     if config.get("type") not in REPOSITORY_TYPES:
         raise ValueError(f".agents/plugins/template.json: type must be one of {', '.join(REPOSITORY_TYPES)}")
     match = REPOSITORY.fullmatch(str(config.get("repository", "")))
     if match is None:
         raise ValueError(".agents/plugins/template.json: repository must be owner/name with a lowercase name")
-    unknown = set(config) - {"schema_version", "template", "type", "repository"}
+    unknown = set(config) - {"schema_version", "type", "repository"}
     if unknown:
         raise ValueError(f".agents/plugins/template.json: unknown fields {sorted(unknown)}")
     return {**config, "namespace": match.group(1)}
@@ -399,10 +389,9 @@ def load_manifests(root: Path, plugins: dict, repository: str) -> tuple[dict, di
             raise ValueError(f"{plugin}: manifests must keep the {plugin} identity and the ./skills/ path")
         if codex["repository"] != f"https://github.com/{repository}":
             raise ValueError(f"{plugin}: manifest repository must be https://github.com/{repository}")
-        if "version" in claude:
-            raise ValueError(f"{plugin}: the Claude manifest stays commit-versioned and omits version")
-        if not SEMVER.fullmatch(str(codex.get("version", ""))):
-            raise ValueError(f"{plugin}: the Codex manifest declares a semantic version")
+        for host in HOSTS:
+            if "version" in manifests[host][plugin]:
+                raise ValueError(f"{plugin}: the {host} manifest must omit version")
         interface = codex.get("interface") or {}
         if not claude.get("displayName") or claude["displayName"] != interface.get("displayName"):
             raise ValueError(f"{plugin}: Claude and Codex manifests disagree on display name")
