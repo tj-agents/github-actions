@@ -20,6 +20,9 @@ ZIZMOR_VERSION = "1.23.1"
 
 def download(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "workflow-lint", "Accept": "application/vnd.github+json"})
+    token = os.environ.get("GITHUB_TOKEN")
+    if url.startswith("https://api.github.com/") and token:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(request, timeout=60) as response:
         return response.read()
 
