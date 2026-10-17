@@ -36,6 +36,8 @@ jobs:
           REQUIRE_RELEASE_TESTS: 'true'
         run: python -B -m unittest discover -s .agents/tests -p test_scaffold.py
       - name: Lint the emitted workflow shapes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python -B .agents/tests/verify_workflows.py
       - name: Check generated hosts
         run: python -B .agents/sync_generated.py --root . --check
