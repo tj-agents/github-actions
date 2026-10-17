@@ -1,6 +1,5 @@
 {
   "name": "github-actions",
-  "version": "0.1.0",
   "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
   "author": {
     "name": "Tommy Seery"
