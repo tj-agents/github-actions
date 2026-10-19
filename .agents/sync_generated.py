@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Generate a plugin repository's host discovery entries, marketplaces and installable payloads."""
-
-from __future__ import annotations
+"""Generate a plugin repository's host discovery entries, marketplaces and
+installable payloads."""
 
 import argparse
 import json
-import os
-from pathlib import Path, PurePosixPath
 import posixpath
 import re
 import shutil
 import stat
-
+from collections.abc import Iterator
+from pathlib import Path, PurePosixPath
+from typing import Any, TypedDict
 
 FRONTMATTER = re.compile(r"\A---\n(?P<header>.*?)\n---\n(?P<body>.*)\Z", re.DOTALL)
 NAME = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -22,16 +21,31 @@ URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 BARE_SKILL_REFERENCE = re.compile(r"`([a-z][a-z0-9-]+)`\s+skill(?:'s)?")
 MARKDOWN_LINK = re.compile(r"\]\(([^)\s]+)\)")
 SKILL_DIRECTORY_REFERENCE = re.compile(r"<skill-directory>/([^\s`'\")\]]+)")
-REQUIRED_METADATA = ("name", "description", "kind", "domain", "profile", "applicability", "requires", "provenance")
-REPOSITORY_TYPES = ("stack", "tool", "utility")
+REQUIRED_METADATA = (
+    "name",
+    "description",
+    "kind",
+    "domain",
+    "profile",
+    "applicability",
+    "requires",
+    "provenance",
+)
+REPOSITORY_TYPES = ("stack", "tool", "utility", "profile")
 RESERVED_AGENT_DIRS = {"continuation", "plugins", "tiers", "tests", "hooks"}
 IGNORED_PARTS = {"__pycache__"}
 IGNORED_SUFFIXES = {".pyc"}
 HOSTS = ("claude", "codex")
 ADAPTER_ROOTS = {"claude": ".claude/skills", "codex": ".codex/skills"}
 MANIFEST_ROOT = ".agents/plugins/manifests"
-MARKETPLACE_OUTPUTS = {"claude": ".claude-plugin/marketplace.json", "codex": ".agents/plugins/marketplace.json"}
-MARKETPLACE_FIELDS = {"claude": {"name", "description", "owner"}, "codex": {"name", "interface"}}
+MARKETPLACE_OUTPUTS = {
+    "claude": ".claude-plugin/marketplace.json",
+    "codex": ".agents/plugins/marketplace.json",
+}
+MARKETPLACE_FIELDS = {
+    "claude": {"name", "description", "owner"},
+    "codex": {"name", "interface"},
+}
 CODEX_POLICY = {"installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL"}
 GENERATED_ROOTS = (
     ".claude/skills",
@@ -44,16 +58,37 @@ GENERATED_ROOTS = (
 TIER_MATCHERS = ("files", "globs", "content", "remote")
 PAYLOAD_FIELDS = {"payloads", "dependencies", "compatibilitySkillAliases"}
 DEPENDENCY = re.compile(r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$")
-STACK_CORE_DEPENDENCIES = ("tj-agents/base", "tj-agents/engineering", "tj-agents/machine")
+STACK_CORE_DEPENDENCIES = (
+    "tj-agents/base",
+    "tj-agents/engineering",
+    "tj-agents/machine",
+)
 TJ_AGENTS_MARKETPLACE = "tj-agents"
 TJ_AGENTS_MARKETPLACE_REPOSITORY = "tj-agents/marketplace"
+
+type JSONObject = dict[str, Any]
+
+
+class SkillRecord(TypedDict):
+    plugin: str
+    name: str
+    kind: str
+    body: str
+    metadata: dict[str, str]
+    directory: str
+    files: list[str]
+
+
+type PluginSkills = dict[str, SkillRecord]
+type Plugins = dict[str, PluginSkills]
+type Dependencies = dict[str, list[str]]
 
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
-def load(path: Path):
+def load(path: Path) -> Any:
     try:
         return json.loads(read(path))
     except FileNotFoundError:
@@ -62,12 +97,14 @@ def load(path: Path):
         raise ValueError(f"{path.as_posix()}: invalid JSON ({error.msg})") from None
 
 
-def dump(value) -> str:
+def dump(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False) + "\n"
 
 
 def ignored(path: PurePosixPath | Path) -> bool:
-    return bool(IGNORED_PARTS.intersection(path.parts)) or path.suffix in IGNORED_SUFFIXES
+    return (
+        bool(IGNORED_PARTS.intersection(path.parts)) or path.suffix in IGNORED_SUFFIXES
+    )
 
 
 def is_link_or_junction(path: Path) -> bool:
@@ -76,29 +113,35 @@ def is_link_or_junction(path: Path) -> bool:
     is_junction = getattr(path, "is_junction", None)
     if is_junction is not None and is_junction():
         return True
-    if os.name != "nt":
-        return False
     try:
-        attributes = path.lstat().st_file_attributes
+        attributes = getattr(path.lstat(), "st_file_attributes", 0)
     except FileNotFoundError:
         return False
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
-def load_config(root: Path) -> dict:
+def load_config(root: Path) -> JSONObject:
     config = load(root / ".agents/plugins/template.json")
     if not isinstance(config, dict):
         raise ValueError(".agents/plugins/template.json: must be a JSON object")
     if config.get("schema_version") != 1:
         raise ValueError(".agents/plugins/template.json: schema_version must be 1")
     if config.get("type") not in REPOSITORY_TYPES:
-        raise ValueError(f".agents/plugins/template.json: type must be one of {', '.join(REPOSITORY_TYPES)}")
+        raise ValueError(
+            ".agents/plugins/template.json: type must be one of "
+            f"{', '.join(REPOSITORY_TYPES)}"
+        )
     match = REPOSITORY.fullmatch(str(config.get("repository", "")))
     if match is None:
-        raise ValueError(".agents/plugins/template.json: repository must be owner/name with a lowercase name")
+        raise ValueError(
+            ".agents/plugins/template.json: repository must be owner/name "
+            "with a lowercase name"
+        )
     unknown = set(config) - {"schema_version", "type", "repository"}
     if unknown:
-        raise ValueError(f".agents/plugins/template.json: unknown fields {sorted(unknown)}")
+        raise ValueError(
+            f".agents/plugins/template.json: unknown fields {sorted(unknown)}"
+        )
     return {**config, "namespace": match.group(1)}
 
 
@@ -123,10 +166,17 @@ def metadata(body: str, source: str) -> dict[str, str]:
 
 
 def is_skill_folder(path: Path) -> bool:
-    return path.is_dir() and not ignored(path) and not is_link_or_junction(path) and (path / "SKILL.md").is_file()
+    return (
+        path.is_dir()
+        and not ignored(path)
+        and not is_link_or_junction(path)
+        and (path / "SKILL.md").is_file()
+    )
 
 
-def load_skill(root: Path, plugin: str, kind: str, directory: Path, name: str, namespace: str) -> dict:
+def load_skill(
+    root: Path, plugin: str, kind: str, directory: Path, name: str, namespace: str
+) -> SkillRecord:
     path = directory / "SKILL.md"
     relative = path.relative_to(root).as_posix()
     raw = path.read_bytes()
@@ -135,7 +185,10 @@ def load_skill(root: Path, plugin: str, kind: str, directory: Path, name: str, n
     body = raw.decode("utf-8").replace("\r\n", "\n")
     values = metadata(body, relative)
     if values["name"] != name:
-        raise ValueError(f"{relative}: name must be {name}, its folder path below the kind folder joined by hyphens")
+        raise ValueError(
+            f"{relative}: name must be {name}, its folder path below the kind "
+            "folder joined by hyphens"
+        )
     if values["kind"] != kind:
         raise ValueError(f"{relative}: kind must equal its kind folder")
     if values["domain"] != namespace:
@@ -147,7 +200,9 @@ def load_skill(root: Path, plugin: str, kind: str, directory: Path, name: str, n
         if ignored(part) or part.parts[0] in members:
             continue
         if is_link_or_junction(item):
-            raise ValueError(f"{item.relative_to(root).as_posix()}: links are not shipped")
+            raise ValueError(
+                f"{item.relative_to(root).as_posix()}: links are not shipped"
+            )
         if item.is_file() and item != path:
             files.append(part.as_posix())
     return {
@@ -162,20 +217,31 @@ def load_skill(root: Path, plugin: str, kind: str, directory: Path, name: str, n
 
 
 def collect_skills(
-    root: Path, plugin: str, kind: str, directory: Path, family: tuple[str, ...], namespace: str, skills: dict[str, dict]
+    root: Path,
+    plugin: str,
+    kind: str,
+    directory: Path,
+    family: tuple[str, ...],
+    namespace: str,
+    skills: PluginSkills,
 ) -> None:
     location = directory.relative_to(root).as_posix()
     if is_link_or_junction(directory):
         raise ValueError(f"{location}: links are not shipped")
     if not directory.is_dir() or not NAME.fullmatch(directory.name):
-        raise ValueError(f"{location}: kind and family folders hold only skill folders and family folders")
+        raise ValueError(
+            f"{location}: kind and family folders hold only skill folders "
+            "and family folders"
+        )
     parts = (*family, directory.name)
     if (directory / "SKILL.md").is_file():
         skill = load_skill(root, plugin, kind, directory, "-".join(parts), namespace)
         if skill["name"] in skills:
             raise ValueError(f"{plugin}: duplicate skill {skill['name']}")
         skills[skill["name"]] = skill
-        members = [item for item in sorted(directory.iterdir()) if is_skill_folder(item)]
+        members = [
+            item for item in sorted(directory.iterdir()) if is_skill_folder(item)
+        ]
     else:
         members = sorted(path for path in directory.iterdir() if not ignored(path))
         if not members:
@@ -184,77 +250,131 @@ def collect_skills(
         collect_skills(root, plugin, kind, member, parts, namespace, skills)
 
 
-def discover(root: Path, namespace: str) -> dict[str, dict[str, dict]]:
+def discover(root: Path, namespace: str) -> Plugins:
     agents = root / ".agents"
-    plugins: dict[str, dict[str, dict]] = {}
-    for plugin_dir in sorted(path for path in agents.iterdir() if path.is_dir() and not ignored(path)):
+    plugins: Plugins = {}
+    for plugin_dir in sorted(
+        path for path in agents.iterdir() if path.is_dir() and not ignored(path)
+    ):
         if plugin_dir.name in RESERVED_AGENT_DIRS:
             continue
         plugin = plugin_dir.name
         if not NAME.fullmatch(plugin):
-            raise ValueError(f".agents/{plugin}: a plugin folder must be a lowercase name")
-        skills: dict[str, dict] = {}
-        for kind_dir in sorted(path for path in plugin_dir.iterdir() if not ignored(path)):
+            raise ValueError(
+                f".agents/{plugin}: a plugin folder must be a lowercase name"
+            )
+        skills: PluginSkills = {}
+        for kind_dir in sorted(
+            path for path in plugin_dir.iterdir() if not ignored(path)
+        ):
             if not kind_dir.is_dir() or not NAME.fullmatch(kind_dir.name):
-                raise ValueError(f".agents/{plugin}/{kind_dir.name}: only kind folders belong in a plugin folder")
-            for entry in sorted(path for path in kind_dir.iterdir() if not ignored(path)):
-                collect_skills(root, plugin, kind_dir.name, entry, (), namespace, skills)
+                raise ValueError(
+                    f".agents/{plugin}/{kind_dir.name}: only kind folders "
+                    "belong in a plugin folder"
+                )
+            for entry in sorted(
+                path for path in kind_dir.iterdir() if not ignored(path)
+            ):
+                collect_skills(
+                    root, plugin, kind_dir.name, entry, (), namespace, skills
+                )
         if not skills:
-            raise ValueError(f".agents/{plugin}: a plugin folder needs at least one skill")
+            raise ValueError(
+                f".agents/{plugin}: a plugin folder needs at least one skill"
+            )
         plugins[plugin] = skills
     if not plugins:
         raise ValueError("No plugin folder with skills under .agents/")
     return plugins
 
 
-def validate_payloads(payloads: dict, plugins: dict[str, dict[str, dict]]) -> dict[str, str]:
+def validate_payloads(payloads: JSONObject, plugins: Plugins) -> dict[str, str]:
     if not isinstance(payloads, dict):
         raise ValueError(".agents/plugins/payloads.json: must be a JSON object")
     unknown = set(payloads) - PAYLOAD_FIELDS
     if unknown:
-        raise ValueError(f".agents/plugins/payloads.json: unknown fields {sorted(unknown)}")
+        raise ValueError(
+            f".agents/plugins/payloads.json: unknown fields {sorted(unknown)}"
+        )
     declarations = payloads.get("payloads")
     if not isinstance(declarations, dict) or not declarations:
-        raise ValueError(".agents/plugins/payloads.json: payloads must be a nonempty object")
+        raise ValueError(
+            ".agents/plugins/payloads.json: payloads must be a nonempty object"
+        )
     publications = {}
     for package, owners in sorted(declarations.items()):
         if not isinstance(package, str) or not NAME.fullmatch(package):
-            raise ValueError(f".agents/plugins/payloads.json: invalid package {package!r}")
+            raise ValueError(
+                f".agents/plugins/payloads.json: invalid package {package!r}"
+            )
         if (
             not isinstance(owners, list)
             or len(owners) != 1
             or not isinstance(owners[0], str)
             or owners[0] not in plugins
         ):
-            raise ValueError(f".agents/plugins/payloads.json: {package} must select exactly one canonical source")
+            raise ValueError(
+                f".agents/plugins/payloads.json: {package} must select exactly "
+                "one canonical source"
+            )
         publications[package] = owners[0]
     for source in plugins:
         if publications.get(source) != source:
-            raise ValueError(f".agents/plugins/payloads.json: {source} must retain its identity publication")
+            raise ValueError(
+                f".agents/plugins/payloads.json: {source} must retain its "
+                "identity publication"
+            )
     dependencies = payloads.get("dependencies", {})
     if not isinstance(dependencies, dict):
-        raise ValueError(".agents/plugins/payloads.json: dependencies must be an object")
+        raise ValueError(
+            ".agents/plugins/payloads.json: dependencies must be an object"
+        )
     for plugin, needs in dependencies.items():
-        if plugin not in plugins or not isinstance(needs, list) or not all(isinstance(need, str) for need in needs) or len(needs) != len(set(needs)):
-            raise ValueError(f".agents/plugins/payloads.json: invalid dependencies for {plugin}")
+        if (
+            plugin not in plugins
+            or not isinstance(needs, list)
+            or not all(isinstance(need, str) for need in needs)
+            or len(needs) != len(set(needs))
+        ):
+            raise ValueError(
+                f".agents/plugins/payloads.json: invalid dependencies for {plugin}"
+            )
         for need in needs:
             if need == plugin:
-                raise ValueError(f".agents/plugins/payloads.json: {plugin} cannot depend on {need}")
+                raise ValueError(
+                    f".agents/plugins/payloads.json: {plugin} cannot depend on {need}"
+                )
             if need in publications and publications[need] != need:
-                raise ValueError(f".agents/plugins/payloads.json: {plugin} cannot depend on local alias {need}")
+                raise ValueError(
+                    f".agents/plugins/payloads.json: {plugin} cannot depend "
+                    f"on local alias {need}"
+                )
             if need not in publications and not DEPENDENCY.fullmatch(need):
-                raise ValueError(f".agents/plugins/payloads.json: {plugin} cannot depend on {need}")
+                raise ValueError(
+                    f".agents/plugins/payloads.json: {plugin} cannot depend on {need}"
+                )
     validate_local_dependency_cycles(dependencies, plugins)
     compatibility_aliases = payloads.get("compatibilitySkillAliases", {})
     if not isinstance(compatibility_aliases, dict):
-        raise ValueError(".agents/plugins/payloads.json: compatibilitySkillAliases must be an object")
+        raise ValueError(
+            ".agents/plugins/payloads.json: compatibilitySkillAliases must be an object"
+        )
     for plugin, aliases in compatibility_aliases.items():
         if plugin not in plugins or not isinstance(aliases, dict):
-            raise ValueError(f".agents/plugins/payloads.json: invalid compatibility aliases for {plugin}")
+            raise ValueError(
+                ".agents/plugins/payloads.json: invalid compatibility aliases "
+                f"for {plugin}"
+            )
         skills = plugins[plugin]
         for alias, declaration in aliases.items():
-            if not isinstance(declaration, dict) or set(declaration) != {"replacedBy", "removeAfter"}:
-                raise ValueError(f"{plugin}:{alias}: an alias declares exactly replacedBy and removeAfter")
+            if not isinstance(declaration, dict) or set(declaration) != {
+                "replacedBy",
+                "removeAfter",
+            }:
+                raise ValueError(
+                    f"{plugin}:{alias}: an alias declares exactly replacedBy "
+                    "and removeAfter"
+                )
             target = str(declaration["replacedBy"]).removeprefix(f"{plugin}:")
             if (
                 alias not in skills
@@ -262,23 +382,36 @@ def validate_payloads(payloads: dict, plugins: dict[str, dict[str, dict]]) -> di
                 or target not in skills
                 or target in aliases
             ):
-                raise ValueError(f"{plugin}:{alias}: an alias must forward to another skill of the same plugin")
+                raise ValueError(
+                    f"{plugin}:{alias}: an alias must forward to another "
+                    "skill of the same plugin"
+                )
             if not DATE.fullmatch(str(declaration["removeAfter"])):
                 raise ValueError(f"{plugin}:{alias}: removeAfter must be YYYY-MM-DD")
-            if skills[alias]["metadata"]["profile"] != skills[target]["metadata"]["profile"]:
-                raise ValueError(f"{plugin}:{alias}: an alias keeps its replacement's profile")
+            if (
+                skills[alias]["metadata"]["profile"]
+                != skills[target]["metadata"]["profile"]
+            ):
+                raise ValueError(
+                    f"{plugin}:{alias}: an alias keeps its replacement's profile"
+                )
     return publications
 
 
-def validate_local_dependency_cycles(dependencies: dict, plugins: dict[str, dict[str, dict]]) -> None:
+def validate_local_dependency_cycles(
+    dependencies: Dependencies, plugins: Plugins
+) -> None:
     states: dict[str, int] = {}
     trail: list[str] = []
 
     def visit(source: str) -> None:
         state = states.get(source, 0)
         if state == 1:
-            cycle = trail[trail.index(source) :] + [source]
-            raise ValueError(f".agents/plugins/payloads.json: local dependency cycle {' -> '.join(cycle)}")
+            cycle = [*trail[trail.index(source) :], source]
+            raise ValueError(
+                ".agents/plugins/payloads.json: local dependency cycle "
+                f"{' -> '.join(cycle)}"
+            )
         if state == 2:
             return
         states[source] = 1
@@ -293,12 +426,20 @@ def validate_local_dependency_cycles(dependencies: dict, plugins: dict[str, dict
         visit(source)
 
 
-def effective_dependencies(config: dict, source: str, dependencies: dict) -> list[str]:
-    inherited = STACK_CORE_DEPENDENCIES if config["type"] == "stack" else ()
+def effective_dependencies(
+    config: JSONObject, source: str, dependencies: Dependencies
+) -> list[str]:
+    inherited: tuple[str, ...] = (
+        STACK_CORE_DEPENDENCIES if config["type"] == "stack" else ()
+    )
+    if config["type"] == "profile":
+        inherited = ("tj-agents/base",)
     return list(dict.fromkeys((*inherited, *dependencies.get(source, []))))
 
 
-def validate_publication_dependencies(publications: dict, dependencies: dict, marketplace: str) -> None:
+def validate_publication_dependencies(
+    publications: dict[str, str], dependencies: Dependencies, marketplace: str
+) -> None:
     for source, needs in dependencies.items():
         for need in needs:
             if "/" not in need:
@@ -307,10 +448,12 @@ def validate_publication_dependencies(publications: dict, dependencies: dict, ma
             if owner == marketplace and (
                 package not in publications or publications[package] == source
             ):
-                raise ValueError(f".agents/plugins/payloads.json: {source} cannot depend on {need}")
+                raise ValueError(
+                    f".agents/plugins/payloads.json: {source} cannot depend on {need}"
+                )
 
 
-def publication_aliases(package: str, aliases: dict) -> dict:
+def publication_aliases(package: str, aliases: JSONObject) -> JSONObject:
     return {
         name: {
             "replacedBy": f"{package}:{declaration['replacedBy'].split(':', 1)[1]}",
@@ -320,9 +463,11 @@ def publication_aliases(package: str, aliases: dict) -> dict:
     }
 
 
-def validate_tiers(root: Path, plugins: dict, repository: str) -> None:
+def validate_tiers(root: Path, plugins: Plugins, repository: str) -> None:
     tier_dir = root / ".agents/tiers"
-    present = sorted(path.name for path in tier_dir.iterdir()) if tier_dir.is_dir() else []
+    present = (
+        sorted(path.name for path in tier_dir.iterdir()) if tier_dir.is_dir() else []
+    )
     expected = sorted(f"{plugin}.json" for plugin in plugins)
     if present != expected:
         raise ValueError(f".agents/tiers must hold exactly {', '.join(expected)}")
@@ -342,81 +487,139 @@ def validate_tiers(root: Path, plugins: dict, repository: str) -> None:
         detect = tier.get("detect")
         if tier.get("applies") == "always":
             if detect is not None:
-                raise ValueError(f"{source}: an always-applicable tier declares no detect markers")
+                raise ValueError(
+                    f"{source}: an always-applicable tier declares no detect markers"
+                )
         elif tier.get("applies") == "stack-present":
             if tier.get("schema_version") == 3:
                 if not isinstance(detect, dict) or not detect:
-                    raise ValueError(f"{source}: a stack-present tier needs a detect predicate")
+                    raise ValueError(
+                        f"{source}: a stack-present tier needs a detect predicate"
+                    )
                 continue
-            if not isinstance(detect, dict) or not any(detect.get(field) for field in TIER_MATCHERS):
-                raise ValueError(f"{source}: a stack-present tier needs at least one detect marker")
+            if not isinstance(detect, dict) or not any(
+                detect.get(field) for field in TIER_MATCHERS
+            ):
+                raise ValueError(
+                    f"{source}: a stack-present tier needs at least one detect marker"
+                )
             if set(detect) - set(TIER_MATCHERS):
-                raise ValueError(f"{source}: unknown detect matchers {sorted(set(detect) - set(TIER_MATCHERS))}")
+                unknown_matchers = sorted(set(detect) - set(TIER_MATCHERS))
+                raise ValueError(
+                    f"{source}: unknown detect matchers {unknown_matchers}"
+                )
         else:
             raise ValueError(f"{source}: applies must be always or stack-present")
 
 
-def load_manifests(root: Path, plugins: dict, repository: str) -> tuple[dict, dict]:
+def load_manifests(
+    root: Path, plugins: dict[str, str], repository: str
+) -> tuple[dict[str, dict[str, JSONObject]], dict[str, JSONObject]]:
     expected = sorted([f"{plugin}.json" for plugin in plugins] + ["marketplace.json"])
-    manifests: dict[str, dict] = {}
-    templates: dict[str, dict] = {}
+    manifests: dict[str, dict[str, JSONObject]] = {}
+    templates: dict[str, JSONObject] = {}
     for host in HOSTS:
         host_dir = root / MANIFEST_ROOT / host
-        present = sorted(path.name for path in host_dir.iterdir()) if host_dir.is_dir() else []
+        present = (
+            sorted(path.name for path in host_dir.iterdir())
+            if host_dir.is_dir()
+            else []
+        )
         if present != expected:
-            raise ValueError(f"{MANIFEST_ROOT}/{host} must hold exactly {', '.join(expected)}")
-        manifests[host] = {plugin: load(host_dir / f"{plugin}.json") for plugin in plugins}
+            raise ValueError(
+                f"{MANIFEST_ROOT}/{host} must hold exactly {', '.join(expected)}"
+            )
+        manifests[host] = {
+            plugin: load(host_dir / f"{plugin}.json") for plugin in plugins
+        }
         templates[host] = load(host_dir / "marketplace.json")
         if not isinstance(templates[host], dict):
-            raise ValueError(f"{MANIFEST_ROOT}/{host}/marketplace.json: must be a JSON object")
-        if any(not isinstance(manifest, dict) for manifest in manifests[host].values()):
-            raise ValueError(f"{MANIFEST_ROOT}/{host}: each plugin manifest must be a JSON object")
-        if set(templates[host]) != MARKETPLACE_FIELDS[host]:
             raise ValueError(
-                f"{MANIFEST_ROOT}/{host}/marketplace.json declares exactly {sorted(MARKETPLACE_FIELDS[host])}; "
-                "its plugin entries are generated"
+                f"{MANIFEST_ROOT}/{host}/marketplace.json: must be a JSON object"
             )
-    if not NAME.fullmatch(str(templates["claude"]["name"])) or templates["claude"]["name"] != templates["codex"]["name"]:
+        if any(not isinstance(manifest, dict) for manifest in manifests[host].values()):
+            raise ValueError(
+                f"{MANIFEST_ROOT}/{host}: each plugin manifest must be a JSON object"
+            )
+        if set(templates[host]) != MARKETPLACE_FIELDS[host]:
+            expected_fields = sorted(MARKETPLACE_FIELDS[host])
+            raise ValueError(
+                f"{MANIFEST_ROOT}/{host}/marketplace.json declares exactly "
+                f"{expected_fields}; its plugin entries are generated"
+            )
+    if (
+        not NAME.fullmatch(str(templates["claude"]["name"]))
+        or templates["claude"]["name"] != templates["codex"]["name"]
+    ):
         raise ValueError("Claude and Codex marketplaces must share one lowercase name")
-    if not templates["codex"]["interface"].get("displayName") or not templates["claude"]["owner"].get("name"):
+    if not templates["codex"]["interface"].get("displayName") or not templates[
+        "claude"
+    ]["owner"].get("name"):
         raise ValueError("Marketplaces need an owner name and a display name")
     for plugin in plugins:
         claude, codex = manifests["claude"][plugin], manifests["codex"][plugin]
-        for field in ("name", "description", "author", "repository", "skills", "keywords"):
+        for field in (
+            "name",
+            "description",
+            "author",
+            "repository",
+            "skills",
+            "keywords",
+        ):
             if not codex.get(field) or codex.get(field) != claude.get(field):
-                raise ValueError(f"{plugin}: Claude and Codex manifests disagree on {field}")
+                raise ValueError(
+                    f"{plugin}: Claude and Codex manifests disagree on {field}"
+                )
         if codex["name"] != plugin or codex["skills"] != "./skills/":
-            raise ValueError(f"{plugin}: manifests must keep the {plugin} identity and the ./skills/ path")
+            raise ValueError(
+                f"{plugin}: manifests must keep the {plugin} identity and "
+                "the ./skills/ path"
+            )
         if codex["repository"] != f"https://github.com/{repository}":
-            raise ValueError(f"{plugin}: manifest repository must be https://github.com/{repository}")
+            raise ValueError(
+                f"{plugin}: manifest repository must be https://github.com/{repository}"
+            )
         for host in HOSTS:
             if "version" in manifests[host][plugin]:
                 raise ValueError(f"{plugin}: the {host} manifest must omit version")
         interface = codex.get("interface") or {}
-        if not claude.get("displayName") or claude["displayName"] != interface.get("displayName"):
-            raise ValueError(f"{plugin}: Claude and Codex manifests disagree on display name")
+        if not claude.get("displayName") or claude["displayName"] != interface.get(
+            "displayName"
+        ):
+            raise ValueError(
+                f"{plugin}: Claude and Codex manifests disagree on display name"
+            )
         if not interface.get("category"):
-            raise ValueError(f"{plugin}: the Codex manifest interface declares a category")
+            raise ValueError(
+                f"{plugin}: the Codex manifest interface declares a category"
+            )
     return manifests, templates
 
 
-def adapter_name(skill: dict, single_plugin: bool) -> str:
+def adapter_name(skill: SkillRecord, single_plugin: bool) -> str:
     return skill["name"] if single_plugin else f"{skill['plugin']}-{skill['name']}"
 
 
-def adapter_body(skill: dict, adapter_dir: str, canonical_dir: str | None = None) -> str:
+def adapter_body(
+    skill: SkillRecord, adapter_dir: str, canonical_dir: str | None = None
+) -> str:
     source = f"{canonical_dir or skill['directory']}/SKILL.md"
     relative = posixpath.relpath(f"/{source}", f"/{adapter_dir}")
     match = FRONTMATTER.match(skill["body"])
-    title = next((line for line in match.group("body").splitlines() if line.startswith("# ")), f"# {skill['name']}")
+    assert match is not None
+    title = next(
+        (line for line in match.group("body").splitlines() if line.startswith("# ")),
+        f"# {skill['name']}",
+    )
     return (
         f"---\n{match.group('header')}\n---\n\n{title}\n\n"
         f"Read and follow the [canonical definition]({relative}) in full.\n"
-        "This discovery entry is generated; edit the referenced `.agents/` definition.\n"
+        "This discovery entry is generated; edit the referenced `.agents/` "
+        "definition.\n"
     )
 
 
-def references(body: str):
+def references(body: str) -> Iterator[str]:
     for target in MARKDOWN_LINK.findall(body):
         if URL_SCHEME.match(target) or target.startswith(("#", "/")):
             continue
@@ -427,62 +630,105 @@ def references(body: str):
         yield target.rstrip(".,;:")
 
 
-def validate_skill_references(plugins: dict[str, dict[str, dict]]) -> None:
+def validate_skill_references(plugins: Plugins) -> None:
     qualified = re.compile(
-        r"(?<![-/\w])(" + "|".join(re.escape(plugin) for plugin in sorted(plugins)) + r"):(?!:)([a-z][a-z0-9-]+)"
+        r"(?<![-/\w])("
+        + "|".join(re.escape(plugin) for plugin in sorted(plugins))
+        + r"):(?!:)([a-z][a-z0-9-]+)"
     )
     for plugin, skills in plugins.items():
         for skill in skills.values():
             for namespace, name in qualified.findall(skill["body"]):
                 if name not in plugins[namespace]:
-                    raise ValueError(f"{plugin}:{skill['name']}: unknown skill reference {namespace}:{name}")
+                    raise ValueError(
+                        f"{plugin}:{skill['name']}: unknown skill reference "
+                        f"{namespace}:{name}"
+                    )
             for name in BARE_SKILL_REFERENCE.findall(skill["body"]):
                 if name not in skills:
-                    raise ValueError(f"{plugin}:{skill['name']}: unknown skill reference `{name}` skill")
+                    raise ValueError(
+                        f"{plugin}:{skill['name']}: unknown skill reference "
+                        f"`{name}` skill"
+                    )
 
 
 def validate_file_references(
     root: Path,
-    plugins: dict,
+    plugins: Plugins,
     canonical_locations: dict[tuple[str, str], list[str]],
-    adapter_locations: list[tuple[dict, str, str, bool, bool]],
-    output: dict,
+    adapter_locations: list[tuple[SkillRecord, str, str, bool, bool]],
+    output: dict[str, bytes],
 ) -> None:
     def present(path: str) -> bool:
         return path in output or any(key.startswith(path + "/") for key in output)
 
     def validate(
         plugin: str,
-        skill: dict,
+        skill: SkillRecord,
         body: str,
         source_dir: str,
         shipped_dir: str,
         source_exists: bool,
         generated_required: bool,
     ) -> None:
+        label = f"{plugin}:{skill['name']}"
         for target in sorted(set(references(body))):
             source = posixpath.normpath(posixpath.join(source_dir, target))
             if source == ".." or source.startswith("../"):
-                raise ValueError(f"{plugin}:{skill['name']}: {target} does not resolve from {source_dir}")
+                raise ValueError(
+                    f"{label}: {target} does not resolve from {source_dir}"
+                )
             shipped = posixpath.normpath(posixpath.join(shipped_dir, target))
             if shipped_dir.startswith("plugins/"):
                 package_root = "/".join(shipped_dir.split("/", 2)[:2])
-                if shipped != package_root and not shipped.startswith(package_root + "/"):
-                    raise ValueError(f"{plugin}:{skill['name']}: {target} does not resolve from generated {shipped_dir}")
+                if shipped != package_root and not shipped.startswith(
+                    package_root + "/"
+                ):
+                    raise ValueError(
+                        f"{label}: {target} does not resolve from generated "
+                        f"{shipped_dir}"
+                    )
             if source_exists and not (root / source).exists():
-                raise ValueError(f"{plugin}:{skill['name']}: {target} does not resolve from {source_dir}")
+                raise ValueError(
+                    f"{label}: {target} does not resolve from {source_dir}"
+                )
             if generated_required and not present(shipped):
-                raise ValueError(f"{plugin}:{skill['name']}: {target} does not resolve from generated {shipped_dir}")
+                raise ValueError(
+                    f"{label}: {target} does not resolve from generated {shipped_dir}"
+                )
 
     for plugin, skills in plugins.items():
         for skill in skills.values():
             for directory in canonical_locations[(plugin, skill["name"])]:
-                validate(plugin, skill, skill["body"], skill["directory"], directory, True, True)
+                validate(
+                    plugin,
+                    skill,
+                    skill["body"],
+                    skill["directory"],
+                    directory,
+                    True,
+                    True,
+                )
     for skill, body, directory, source_exists, generated_required in adapter_locations:
-        validate(skill["plugin"], skill, body, directory, directory, source_exists, generated_required)
+        validate(
+            skill["plugin"],
+            skill,
+            body,
+            directory,
+            directory,
+            source_exists,
+            generated_required,
+        )
 
 
-def harness_body(root: Path, package: str, marketplace: str, output: dict[str, bytes], dependencies: list[str], stack: bool) -> str | None:
+def harness_body(
+    root: Path,
+    package: str,
+    marketplace: str,
+    output: dict[str, bytes],
+    dependencies: list[str],
+    inherit_core: bool,
+) -> str | None:
     relative = f"{MANIFEST_ROOT}/harness/{package}.json"
     path = root / relative
     if not path.exists():
@@ -494,39 +740,72 @@ def harness_body(root: Path, package: str, marketplace: str, output: dict[str, b
         raise ValueError(f"{relative}: unreadable JSON ({error})") from None
     if not isinstance(manifest, dict):
         raise ValueError(f"{relative}: must be a JSON object")
-    if type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 1:
+    if (
+        type(manifest.get("schema_version")) is not int
+        or manifest["schema_version"] != 1
+    ):
         raise ValueError(f"{relative}: schema_version must be 1")
     if manifest.get("plugin") != f"{marketplace}/{package}":
         raise ValueError(f"{relative}: plugin must be {marketplace}/{package}")
     roots = manifest.get("source_roots")
-    if not isinstance(roots, list) or not roots or not all(isinstance(value, str) and value for value in roots):
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or not all(isinstance(value, str) and value for value in roots)
+    ):
         raise ValueError(f"{relative}: source_roots must be a nonempty list of paths")
     if len(roots) != len(set(roots)):
         raise ValueError(f"{relative}: source_roots must be unique")
     for value in roots:
         source = PurePosixPath(value)
         if (
-            "\\" in value or ":" in value or "\x00" in value
-            or source.is_absolute() or ".." in source.parts
-            or source.as_posix() != value or len(source.parts) < 2
+            "\\" in value
+            or ":" in value
+            or "\x00" in value
+            or source.is_absolute()
+            or ".." in source.parts
+            or source.as_posix() != value
+            or len(source.parts) < 2
             or source.parts[0] != ".agents"
         ):
             raise ValueError(f"{relative}: unsafe canonical source root {value!r}")
         target = f"plugins/{package}/{value}"
-        if target not in output and not any(name.startswith(target + "/") for name in output):
-            raise ValueError(f"{relative}: source root {value!r} is not shipped in {package}")
-    if not stack:
+        if target not in output and not any(
+            name.startswith(target + "/") for name in output
+        ):
+            raise ValueError(
+                f"{relative}: source root {value!r} is not shipped in {package}"
+            )
+    if not inherit_core:
         return body
     requires = manifest.get("requires")
     if not isinstance(requires, dict):
         raise ValueError(f"{relative}: requires must be a JSON object")
     marketplaces = requires.get("marketplaces", [])
-    if not isinstance(marketplaces, list) or not all(isinstance(value, dict) for value in marketplaces):
+    if not isinstance(marketplaces, list) or not all(
+        isinstance(value, dict) for value in marketplaces
+    ):
         raise ValueError(f"{relative}: requires.marketplaces must be a list of objects")
-    retained_marketplaces = [value for value in marketplaces if value.get("id") != TJ_AGENTS_MARKETPLACE]
-    retained_marketplaces.append({"id": TJ_AGENTS_MARKETPLACE, "repository": TJ_AGENTS_MARKETPLACE_REPOSITORY})
-    plugins = [f"{marketplace}/{package}", *(need if "/" in need else f"{marketplace}/{need}" for need in dependencies)]
-    return dump({**manifest, "requires": {**requires, "marketplaces": retained_marketplaces, "plugins": list(dict.fromkeys(plugins))}})
+    retained_marketplaces = [
+        value for value in marketplaces if value.get("id") != TJ_AGENTS_MARKETPLACE
+    ]
+    retained_marketplaces.append(
+        {"id": TJ_AGENTS_MARKETPLACE, "repository": TJ_AGENTS_MARKETPLACE_REPOSITORY}
+    )
+    plugins = [
+        f"{marketplace}/{package}",
+        *(need if "/" in need else f"{marketplace}/{need}" for need in dependencies),
+    ]
+    return dump(
+        {
+            **manifest,
+            "requires": {
+                **requires,
+                "marketplaces": retained_marketplaces,
+                "plugins": list(dict.fromkeys(plugins)),
+            },
+        }
+    )
 
 
 def claude_dependencies(dependencies: list[str]) -> list[str]:
@@ -541,7 +820,13 @@ def claude_dependencies(dependencies: list[str]) -> list[str]:
 
 
 def dependency_marketplaces(dependencies: list[str], marketplace: str) -> list[str]:
-    return sorted({dependency.split("/", 1)[0] for dependency in dependencies if "/" in dependency and dependency.split("/", 1)[0] != marketplace})
+    return sorted(
+        {
+            dependency.split("/", 1)[0]
+            for dependency in dependencies
+            if "/" in dependency and dependency.split("/", 1)[0] != marketplace
+        }
+    )
 
 
 def build(root: Path) -> dict[str, bytes]:
@@ -555,12 +840,14 @@ def build(root: Path) -> dict[str, bytes]:
     validate_skill_references(plugins)
     aliases = payloads.get("compatibilitySkillAliases", {})
     dependencies = payloads.get("dependencies", {})
-    validate_publication_dependencies(publications, dependencies, templates["claude"]["name"])
+    validate_publication_dependencies(
+        publications, dependencies, templates["claude"]["name"]
+    )
     single_plugin = len(plugins) == 1
 
     output: dict[str, bytes] = {}
     canonical_locations: dict[tuple[str, str], list[str]] = {}
-    adapter_locations: list[tuple[dict, str, str, bool, bool]] = []
+    adapter_locations: list[tuple[SkillRecord, str, str, bool, bool]] = []
 
     def emit(relative: str, data: str | bytes) -> None:
         key = PurePosixPath(relative).as_posix()
@@ -568,7 +855,7 @@ def build(root: Path) -> dict[str, bytes]:
             raise ValueError(f"Duplicate generated output: {key}")
         output[key] = data.encode("utf-8") if isinstance(data, str) else data
 
-    def emit_skill(directory: str, skill: dict, body: str) -> None:
+    def emit_skill(directory: str, skill: SkillRecord, body: str) -> None:
         emit(f"{directory}/SKILL.md", body)
         for file in skill["files"]:
             emit(f"{directory}/{file}", (root / skill["directory"] / file).read_bytes())
@@ -576,8 +863,9 @@ def build(root: Path) -> dict[str, bytes]:
     repository_index = [
         f"# {namespace} capabilities",
         "",
-        "Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's name is its folder path below "
-        "the kind folder joined by hyphens.",
+        "Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; "
+        "a skill's name is its folder path below the kind folder joined by "
+        "hyphens.",
         "",
     ]
     for source, skills in plugins.items():
@@ -587,10 +875,18 @@ def build(root: Path) -> dict[str, bytes]:
                 adapter_dir = f"{adapter_root}/{adapter_name(skill, single_plugin)}"
                 host_adapter = adapter_body(skill, adapter_dir)
                 emit_skill(adapter_dir, skill, host_adapter)
-                adapter_locations.append((skill, host_adapter, adapter_dir, True, False))
-        entries = [f"- `{skill['name']}` — {skill['kind']} — {skill['metadata']['profile']}" for skill in ordered]
+                adapter_locations.append(
+                    (skill, host_adapter, adapter_dir, True, False)
+                )
+        entries = [
+            f"- `{skill['name']}` — {skill['kind']} — {skill['metadata']['profile']}"
+            for skill in ordered
+        ]
         repository_index += [f"## {source}", ""]
-        repository_index += [f"{entry} — `{skill['directory']}/SKILL.md`" for entry, skill in zip(entries, ordered)]
+        repository_index += [
+            f"{entry} — `{skill['directory']}/SKILL.md`"
+            for entry, skill in zip(entries, ordered, strict=True)
+        ]
         repository_index.append("")
 
     for package, source in publications.items():
@@ -604,19 +900,33 @@ def build(root: Path) -> dict[str, bytes]:
             package_adapter = adapter_body(skill, package_adapter_dir, canonical_dir)
             emit_skill(canonical_dir, skill, skill["body"])
             emit_skill(package_adapter_dir, skill, package_adapter)
-            canonical_locations.setdefault((source, skill["name"]), []).append(canonical_dir)
-            adapter_locations.append((skill, package_adapter, package_adapter_dir, False, True))
+            canonical_locations.setdefault((source, skill["name"]), []).append(
+                canonical_dir
+            )
+            adapter_locations.append(
+                (skill, package_adapter, package_adapter_dir, False, True)
+            )
 
-        entries = [f"- `{skill['name']}` — {skill['kind']} — {skill['metadata']['profile']}" for skill in ordered]
-        emit(f"plugins/{package}/INDEX.md", "\n".join([f"# {package} package capabilities", "", *entries, ""]))
+        entries = [
+            f"- `{skill['name']}` — {skill['kind']} — {skill['metadata']['profile']}"
+            for skill in ordered
+        ]
+        emit(
+            f"plugins/{package}/INDEX.md",
+            "\n".join([f"# {package} package capabilities", "", *entries, ""]),
+        )
         profiles: dict[str, list[str]] = {}
         for skill in ordered:
             if skill["name"] not in package_aliases:
-                profiles.setdefault(skill["metadata"]["profile"], []).append(skill["name"])
+                profiles.setdefault(skill["metadata"]["profile"], []).append(
+                    skill["name"]
+                )
         selection = {
             "plugin": package,
             "dependencies": effective,
-            "profiles": {profile: sorted(names) for profile, names in sorted(profiles.items())},
+            "profiles": {
+                profile: sorted(names) for profile, names in sorted(profiles.items())
+            },
             "compatibilitySkillAliases": package_aliases,
             "skills": [
                 {
@@ -631,13 +941,22 @@ def build(root: Path) -> dict[str, bytes]:
             ],
         }
         emit(f"plugins/{package}/selection.json", dump(selection))
-        emit(f"plugins/{package}/tier.json", read(root / f".agents/tiers/{source}.json"))
-        harness = harness_body(root, package, templates["claude"]["name"], output, effective, config["type"] == "stack")
+        emit(
+            f"plugins/{package}/tier.json", read(root / f".agents/tiers/{source}.json")
+        )
+        harness = harness_body(
+            root,
+            package,
+            templates["claude"]["name"],
+            output,
+            effective,
+            config["type"] in ("stack", "profile"),
+        )
         if harness is not None:
             emit(f"plugins/{package}/harness.json", harness)
         for host in HOSTS:
             manifest = manifests[host][package]
-            if host == "claude" and config["type"] == "stack":
+            if host == "claude" and config["type"] in ("stack", "profile"):
                 manifest = {**manifest, "dependencies": claude_dependencies(effective)}
             emit(f"plugins/{package}/.{host}-plugin/plugin.json", dump(manifest))
 
@@ -664,15 +983,24 @@ def build(root: Path) -> dict[str, bytes]:
             }
         )
     claude_marketplaces = dependency_marketplaces(
-        [dependency for source in publications.values() for dependency in effective_dependencies(config, source, dependencies)],
+        [
+            dependency
+            for source in publications.values()
+            for dependency in effective_dependencies(config, source, dependencies)
+        ],
         templates["claude"]["name"],
     )
     claude_marketplace = {**templates["claude"], "plugins": claude_entries}
-    if config["type"] == "stack" and claude_marketplaces:
+    if config["type"] in ("stack", "profile") and claude_marketplaces:
         claude_marketplace["allowCrossMarketplaceDependenciesOn"] = claude_marketplaces
     emit(MARKETPLACE_OUTPUTS["claude"], dump(claude_marketplace))
-    emit(MARKETPLACE_OUTPUTS["codex"], dump({**templates["codex"], "plugins": codex_entries}))
-    validate_file_references(root, plugins, canonical_locations, adapter_locations, output)
+    emit(
+        MARKETPLACE_OUTPUTS["codex"],
+        dump({**templates["codex"], "plugins": codex_entries}),
+    )
+    validate_file_references(
+        root, plugins, canonical_locations, adapter_locations, output
+    )
     return output
 
 
@@ -689,7 +1017,10 @@ def generated_root_paths(root: Path) -> list[Path]:
         for part in relative.parts:
             ancestor = ancestor / part
             if is_link_or_junction(ancestor):
-                raise ValueError(f"Generated root must not be or sit under a link or junction: {value}")
+                raise ValueError(
+                    "Generated root must not be or sit under a link or "
+                    f"junction: {value}"
+                )
         path = resolved_root.joinpath(*relative.parts).resolve()
         if path == resolved_root or not path.is_relative_to(resolved_root):
             raise ValueError(f"Generated root escapes the repository: {value}")
@@ -717,11 +1048,19 @@ def synchronize(root: Path, check: bool) -> int:
     expected = set(output)
     actual = existing_files(root)
     if check:
-        stale = sorted(path for path in expected & actual if (root / path).read_bytes() != output[path])
-        problems = [("MISSING", sorted(expected - actual)), ("STALE", stale), ("EXTRA", sorted(actual - expected))]
+        stale = sorted(
+            path
+            for path in expected & actual
+            if (root / path).read_bytes() != output[path]
+        )
+        problems = [
+            ("MISSING", sorted(expected - actual)),
+            ("STALE", stale),
+            ("EXTRA", sorted(actual - expected)),
+        ]
         for label, paths in problems:
-            for path in paths:
-                print(f"{label}: {path}")
+            for entry in paths:
+                print(f"{label}: {entry}")
         if any(paths for _, paths in problems):
             return 1
         print(f"generated outputs current: {len(expected)} files")
@@ -741,7 +1080,9 @@ def synchronize(root: Path, check: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
