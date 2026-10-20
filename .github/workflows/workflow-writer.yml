@@ -35,6 +35,8 @@ jobs:
         env:
           REQUIRE_RELEASE_TESTS: 'true'
         run: python -B -m unittest discover -s .agents/tests -p test_scaffold.py
+      - name: Test the merge policy tool
+        run: python -B -m unittest discover -s .agents/tests -p test_merge_policy.py
       - name: Lint the emitted workflow shapes
         env:
           GITHUB_TOKEN: ${{ github.token }}

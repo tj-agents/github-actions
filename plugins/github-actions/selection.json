@@ -22,6 +22,7 @@
       "learning"
     ],
     "scaffold": [
+      "merge-policy",
       "scaffold"
     ]
   },
@@ -117,6 +118,20 @@
       "profile": "core",
       "applicability": [
         "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "merge-policy",
+      "kind": "utility",
+      "profile": "scaffold",
+      "applicability": [
+        "GitHub repositories"
       ],
       "requires": [
         "github-actions"
