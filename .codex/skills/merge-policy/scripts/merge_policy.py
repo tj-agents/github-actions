@@ -16,6 +16,7 @@ RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
 ADMIN_ROLE_ID = 5
+GITHUB_ACTIONS_APP_ID = 15368
 
 
 class PolicyError(Exception):
@@ -31,7 +32,7 @@ def load_policy(path):
         raise PolicyError(f"{path} is not valid JSON: {error}") from error
     if not isinstance(policy, dict):
         raise PolicyError(f"{path} must contain a JSON object")
-    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check"}
+    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
     if unknown:
         raise PolicyError(f"{path} has unknown keys: {', '.join(sorted(unknown))}")
     if not isinstance(policy.get("agents_may_merge"), bool):
@@ -39,6 +40,8 @@ def load_policy(path):
     checks = policy.get("required_checks", [])
     if not isinstance(checks, list) or not all(isinstance(check, str) and check.strip() for check in checks):
         raise PolicyError("required_checks must be a list of check names")
+    if not isinstance(policy.get("ci_pushes_default_branch", False), bool):
+        raise PolicyError("ci_pushes_default_branch must be true or false")
     review = policy.get("review_check")
     if policy["agents_may_merge"]:
         if not isinstance(review, str) or not review.strip():
@@ -53,6 +56,13 @@ def required_contexts(policy):
     if policy["agents_may_merge"]:
         contexts.append(policy["review_check"])
     return list(dict.fromkeys(contexts))
+
+
+def bypass_actors(policy):
+    actors = [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]
+    if policy.get("ci_pushes_default_branch"):
+        actors.append({"actor_id": GITHUB_ACTIONS_APP_ID, "actor_type": "Integration", "bypass_mode": "always"})
+    return actors
 
 
 def ruleset(policy):
@@ -79,7 +89,7 @@ def ruleset(policy):
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "bypass_actors": [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
+        "bypass_actors": bypass_actors(policy),
         "rules": rules,
     }
 
