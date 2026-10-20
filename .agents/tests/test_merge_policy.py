@@ -23,8 +23,10 @@ class FakeGh:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs.get("input")))
-        path = next(part for part in command[2:] if part.startswith("repos/"))
+        path = next(part for part in command[2:] if part.startswith(("repos/", "users/")))
         value = self.responses.get(path, {})
+        if value == 404:
+            return subprocess.CompletedProcess(command, 1, "", "gh: Not Found (HTTP 404)")
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
 
 
@@ -114,6 +116,30 @@ class CheckTests(unittest.TestCase):
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
         self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
+
+    def test_sync_applies_the_default_or_the_repository_policy_only_where_drifted(self):
+        import base64
+        ci = {"agents_may_merge": False, "ci_pushes_default_branch": True}
+        encoded = base64.b64encode(json.dumps(ci).encode()).decode()
+        responses = {
+            "users/o/repos?type=owner&per_page=100&page=1": [
+                {"full_name": "o/new"}, {"full_name": "o/core"}, {"full_name": "o/done"},
+                {"full_name": "o/secret", "private": True}, {"full_name": "o/copy", "fork": True}],
+            "repos/o/new/contents/.github/merge-policy.json": 404,
+            "repos/o/done/contents/.github/merge-policy.json": 404,
+            "repos/o/core/contents/.github/merge-policy.json": {"content": encoded},
+            "repos/o/done/rules/branches/main?per_page=100": rules({"agents_may_merge": False}),
+            "repos/o/new/rulesets?per_page=100": [],
+            "repos/o/core/rulesets?per_page=100": [],
+        }
+        for name in ("new", "core", "done"):
+            responses[f"repos/o/{name}"] = {"default_branch": "main"}
+        gh = FakeGh(responses)
+        results = {repository: action for repository, action, _ in merge_policy.sync(["o"], run=gh)}
+        self.assertEqual({"o/new": "created", "o/core": "created", "o/done": "current"}, results)
+        posted = {command[4]: json.loads(payload) for command, payload in gh.calls if "POST" in command}
+        self.assertEqual(1, len(posted["repos/o/new/rulesets"]["bypass_actors"]))
+        self.assertEqual(2, len(posted["repos/o/core/rulesets"]["bypass_actors"]))
 
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
