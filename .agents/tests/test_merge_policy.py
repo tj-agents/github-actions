@@ -43,7 +43,7 @@ class PolicyTests(unittest.TestCase):
         return path
 
     def test_invalid_policies_are_refused(self):
-        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True},
+        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True, "review_check": ""},
                       {"agents_may_merge": False, "review_check": "agent-review"},
                       {"agents_may_merge": False, "required_checks": [""]},
                       {"agents_may_merge": False, "extra": 1}):
@@ -117,7 +117,7 @@ class CheckTests(unittest.TestCase):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
         self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
 
-    def test_sync_applies_the_default_or_the_repository_policy_only_where_drifted(self):
+    def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
         import base64
         ci = {"agents_may_merge": False, "ci_pushes_default_branch": True}
         encoded = base64.b64encode(json.dumps(ci).encode()).decode()
@@ -126,7 +126,7 @@ class CheckTests(unittest.TestCase):
                 {"full_name": "o/new"}, {"full_name": "o/core"}, {"full_name": "o/done"},
                 {"full_name": "o/secret", "private": True}, {"full_name": "o/copy", "fork": True}],
             "repos/o/new/contents/.github/merge-policy.json": 404,
-            "repos/o/done/contents/.github/merge-policy.json": 404,
+            "repos/o/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"agents_may_merge": false}').decode()},
             "repos/o/core/contents/.github/merge-policy.json": {"content": encoded},
             "repos/o/done/rules/branches/main?per_page=100": rules({"agents_may_merge": False}),
             "repos/o/new/rulesets?per_page=100": [],
@@ -136,9 +136,9 @@ class CheckTests(unittest.TestCase):
             responses[f"repos/o/{name}"] = {"default_branch": "main"}
         gh = FakeGh(responses)
         results = {repository: action for repository, action, _ in merge_policy.sync(["o"], run=gh)}
-        self.assertEqual({"o/new": "created", "o/core": "created", "o/done": "current"}, results)
+        self.assertEqual({"o/core": "created", "o/done": "current"}, results)
         posted = {command[4]: json.loads(payload) for command, payload in gh.calls if "POST" in command}
-        self.assertEqual(1, len(posted["repos/o/new/rulesets"]["bypass_actors"]))
+        self.assertEqual(["repos/o/core/rulesets"], list(posted))
         self.assertEqual(2, len(posted["repos/o/core/rulesets"]["bypass_actors"]))
 
     def test_cli_exit_codes(self):
