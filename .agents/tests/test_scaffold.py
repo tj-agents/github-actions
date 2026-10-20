@@ -33,6 +33,21 @@ def body(name):
 
 
 class RenderingTests(unittest.TestCase):
+    def test_generic_scaffold_does_not_enroll_repositories_in_personal_events(self):
+        for build in (False, True):
+            for release in (False, True):
+                with self.subTest(build=build, release=release):
+                    config = fixture()
+                    config["prod-release"] = release
+                    if not build:
+                        config.pop("build")
+                    files = scaffold.render(config)
+                    self.assertNotIn(".github/workflows/machine-events.yml", set(files))
+                    self.assertNotIn(".github/merge-policy.json", set(files))
+                    for content in files.values():
+                        self.assertNotIn("MACHINE_EVENTS_TOPIC", content)
+                        self.assertNotIn("tj-agents/github-actions/.github/actions/machine-events", content)
+
     def test_provider_status_functions_are_preserved_behind_lifecycle_authorization(self):
         config = fixture()
         config["provider"]["environments"] = {"preview": "ephemeral"}
@@ -402,7 +417,7 @@ class RenderingTests(unittest.TestCase):
     def test_complete_default_set_and_optional_release(self):
         config = fixture()
         files = scaffold.render(config)
-        expected = {"pr.yml", "ci.yml", "prod.yml", "pr-closed.yml", "deploy-environment.yml", "destroy-preview.yml", "machine-events.yml"}
+        expected = {"pr.yml", "ci.yml", "prod.yml", "pr-closed.yml", "deploy-environment.yml", "destroy-preview.yml"}
         self.assertEqual(expected, {Path(path).name for path in files if path.startswith(".github/workflows/")})
         config["prod-release"] = False
         without_release = scaffold.render(config)

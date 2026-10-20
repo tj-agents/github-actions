@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Apply or check a repository's merge policy, from `.github/merge-policy.json` (may agents merge without Tommy?), as its GitHub ruleset, and report drift in CI. Use when creating a repository, changing who may merge, or protecting a default branch.
+description: Apply or check Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing who may merge in it, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -10,6 +10,11 @@ provenance: house
 ---
 
 # Merge policy
+
+This utility implements Tommy's personal merge arrangement. Apply it only in explicitly personal
+repositories under `tj-agents`, `Concertable` or `tomjseery`; `apply`, `sync` and `reconcile` reject
+other owners before contacting GitHub. Employer repositories keep their own protections. Selecting
+GitHub Actions alone does not adopt this policy.
 
 A repository records who may merge in `.github/merge-policy.json`:
 
