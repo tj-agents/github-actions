@@ -31,7 +31,11 @@
         "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
         "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
         "Bash(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)",
-        "PowerShell(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)"
+        "PowerShell(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)",
+        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/machine-events/scripts/caller.py)",
+        "Bash(python -B ${PLUGIN_ROOT}/skills/machine-events/scripts/caller.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/machine-events/scripts/caller.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/skills/machine-events/scripts/caller.py)"
       ],
       "codex_prefix_rules": [
         {
@@ -65,6 +69,40 @@
             [
               "python",
               "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py"
+            ]
+          ]
+        },
+        {
+          "pattern": [
+            [
+              "python",
+              "python.exe",
+              "python3",
+              "py"
+            ],
+            "-B",
+            [
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/machine-events/scripts/caller.py",
+              "${PLUGIN_ROOT}/skills/machine-events/scripts/caller.py"
+            ]
+          ],
+          "justification": "Render or install the pinned shared machine event caller.",
+          "match": [
+            [
+              "python",
+              "-B",
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/machine-events/scripts/caller.py"
+            ],
+            [
+              "python",
+              "-B",
+              "${PLUGIN_ROOT}/skills/machine-events/scripts/caller.py"
+            ]
+          ],
+          "not_match": [
+            [
+              "python",
+              "${PLUGIN_ROOT}/.agents/github-actions/utility/machine-events/scripts/caller.py"
             ]
           ]
         }

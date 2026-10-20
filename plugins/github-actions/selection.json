@@ -11,6 +11,7 @@
       "domain-design",
       "errors",
       "libraries",
+      "machine-events",
       "security",
       "structure",
       "style",
@@ -121,6 +122,21 @@
       ],
       "requires": [
         "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "machine-events",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "tj-agents",
+        "Concertable and tomjseery repositories"
+      ],
+      "requires": [
+        "python"
       ],
       "provenance": [
         "house"

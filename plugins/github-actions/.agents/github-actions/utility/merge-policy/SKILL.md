@@ -59,3 +59,5 @@ must run on every PR, without path filters, or that PR can never merge. It exits
 ```yaml
 - uses: tj-agents/github-actions/.github/actions/merge-policy-check@<sha> # vX.Y.Z
 ```
+
+`reconcile --repo OWNER/NAME` is the background subscriber entry point. It resolves the current default-branch commit from GitHub, validates the policy at that commit and applies only a declared policy. It compares the complete owned ruleset before writing, including bypass actors. Core setup runs it as Tommy in response to hints and after an offline interval. The hint supplies no policy or ref.
