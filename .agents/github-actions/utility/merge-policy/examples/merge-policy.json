@@ -1,0 +1,4 @@
+{
+  "agents_may_merge": false,
+  "required_checks": ["ci-required"]
+}

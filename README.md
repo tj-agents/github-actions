@@ -13,11 +13,15 @@ Published as plugin `github-actions` from this repository's `github-actions-agen
 - Utility: [github-actions:scaffold](.agents/github-actions/utility/scaffold/SKILL.md), a Python 3.9+
   stdlib writer with a JSON CLI and pure complete-file-map API. Providers supply cloud steps and data;
   this package owns the workflow set, reusable graph, pins, composites, Dependabot and lint.
+- Utility: [github-actions:merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md) applies
+  `.github/merge-policy.json` as the repository's GitHub ruleset; its composite action
+  `.github/actions/merge-policy-check` reports drift in CI.
 
 ## Authoring and verification
 
 ```text
 python -B -m unittest discover -s .agents/tests -p test_scaffold.py
+python -B -m unittest discover -s .agents/tests -p test_merge_policy.py
 python -B .agents/tests/verify_workflows.py
 python -B .agents/sync_generated.py --root .
 python -B .agents/sync_generated.py --root . --check
