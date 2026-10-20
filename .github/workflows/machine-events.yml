@@ -16,4 +16,4 @@ jobs:
       - name: Publish repository hint
         uses: tj-agents/github-actions/.github/actions/machine-events@d45d8a70dc1309ca02d304c8e3c58e493c263f89
         with:
-          topic: ${{ vars.MACHINE_EVENTS_TOPIC }}
+          topic: ${{ secrets.MACHINE_EVENTS_TOPIC }}
