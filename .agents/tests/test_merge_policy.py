@@ -53,7 +53,8 @@ class PolicyTests(unittest.TestCase):
         review = next(rule for rule in ruleset["rules"] if rule["type"] == "pull_request")["parameters"]
         self.assertEqual(1, review["required_approving_review_count"])
         self.assertTrue(review["require_last_push_approval"])
-        self.assertEqual([], ruleset["bypass_actors"])
+        self.assertEqual([{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
+                         ruleset["bypass_actors"])
         self.assertEqual(["~DEFAULT_BRANCH"], ruleset["conditions"]["ref_name"]["include"])
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
@@ -96,9 +97,14 @@ class CheckTests(unittest.TestCase):
         self.assertEqual([], self.check(HUMAN, rules(HUMAN)))
         self.assertEqual([], self.check(AGENTS, rules(AGENTS)))
 
-    def test_unprotected_branch_reports_every_gap(self):
+    def test_no_rules_names_the_free_plan_cause(self):
         problems = self.check(HUMAN, [])
-        self.assertEqual(5, len(problems))
+        self.assertEqual(1, len(problems))
+        self.assertIn("GitHub Free", problems[0])
+
+    def test_partial_rules_report_every_gap(self):
+        problems = self.check(HUMAN, [{"type": "pull_request", "parameters": {}}])
+        self.assertEqual(6, len(problems))
         self.assertIn("required checks not enforced: ci-required", problems)
 
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
