@@ -11,4 +11,5 @@
 - `direction` — knowledge — knowledge
 - `knowledge` — knowledge — knowledge
 - `learning` — knowledge — knowledge
+- `merge-policy` — utility — scaffold
 - `scaffold` — utility — scaffold

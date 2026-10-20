@@ -15,4 +15,5 @@ Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's n
 - `direction` — knowledge — knowledge — `.agents/github-actions/knowledge/direction/SKILL.md`
 - `knowledge` — knowledge — knowledge — `.agents/github-actions/knowledge/knowledge/SKILL.md`
 - `learning` — knowledge — knowledge — `.agents/github-actions/knowledge/learning/SKILL.md`
+- `merge-policy` — utility — scaffold — `.agents/github-actions/utility/merge-policy/SKILL.md`
 - `scaffold` — utility — scaffold — `.agents/github-actions/utility/scaffold/SKILL.md`
