@@ -17,7 +17,6 @@ RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
 ADMIN_ROLE_ID = 5
-DEFAULT_SYNC_POLICY = {"agents_may_merge": False}
 GITHUB_ACTIONS_APP_ID = 15368
 
 
@@ -50,8 +49,8 @@ def validate_policy(policy, path):
         raise PolicyError("ci_pushes_default_branch must be true or false")
     review = policy.get("review_check")
     if policy["agents_may_merge"]:
-        if not isinstance(review, str) or not review.strip():
-            raise PolicyError("agents_may_merge requires review_check: the automated review check that must pass")
+        if review is not None and (not isinstance(review, str) or not review.strip()):
+            raise PolicyError("review_check must name the automated review check that must pass")
     elif review is not None:
         raise PolicyError("review_check applies only when agents_may_merge is true")
     return policy
@@ -59,7 +58,7 @@ def validate_policy(policy, path):
 
 def required_contexts(policy):
     contexts = list(policy.get("required_checks", []))
-    if policy["agents_may_merge"]:
+    if policy["agents_may_merge"] and policy.get("review_check"):
         contexts.append(policy["review_check"])
     return list(dict.fromkeys(contexts))
 
@@ -174,7 +173,7 @@ def repository_policy(repository, run=subprocess.run):
         content = gh([f"repos/{repository}/contents/{DEFAULT_POLICY.as_posix()}"], run=run)
     except PolicyError as error:
         if "HTTP 404" in str(error):
-            return dict(DEFAULT_SYNC_POLICY)
+            return None
         raise
     try:
         policy = json.loads(base64.b64decode(content["content"]).decode("utf-8"))
@@ -195,12 +194,14 @@ def public_repositories(owner, run=subprocess.run):
 
 
 def sync(owners, run=subprocess.run):
-    """Apply each public repository's merge policy, or the default, wherever GitHub has drifted from it."""
+    """Apply each public repository's declared merge policy wherever GitHub has drifted from it."""
     results = []
     for owner in owners:
         for repository in public_repositories(owner, run=run):
             try:
                 policy = repository_policy(repository, run=run)
+                if policy is None:
+                    continue
                 if not check(repository, policy, run=run):
                     results.append((repository, "current", []))
                     continue

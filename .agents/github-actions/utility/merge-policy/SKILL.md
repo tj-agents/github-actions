@@ -24,8 +24,8 @@ A repository records who may merge in `.github/merge-policy.json`:
   account, so the approver is Tommy.
 - `ci_pushes_default_branch: true`: GitHub Actions may push to the default branch, for a post-merge
   job that commits generated files.
-- `agents_may_merge: true`: no approval, but `review_check` (the automated review job on the PR head) must
-  pass, along with `required_checks`.
+- `agents_may_merge: true`: no approval; agents merge once `required_checks` and the optional
+  `review_check` (an automated review job on the PR head) pass. A repository without the file has no gate.
 
 Every policy requires a PR and blocks deletion and force-push of the default branch. Repository admins
 may bypass only through a PR, so Tommy can always merge his own push. The bot account must never be an
@@ -48,8 +48,8 @@ creation and whenever the flag changes; agents use `--dry-run` only. GitHub Free
 rulesets only on public repositories, so `apply` fails on a private repository in a Free organization.
 
 `sync --owner X [--owner Y]` covers every public, non-fork repository of those accounts: it reads each
-repository's `.github/merge-policy.json` (default `{"agents_may_merge": false}` when absent) and applies it
-wherever GitHub has drifted, so a new repository is covered on the next run. It needs admin rights, so it
+repository's `.github/merge-policy.json` and applies it wherever GitHub has drifted; a repository without
+the file is left alone. Declaring or changing the file is a PR, so turning a gate off needs Tommy's approval. It needs admin rights, so it
 runs as Tommy, never as an agent.
 
 `check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
