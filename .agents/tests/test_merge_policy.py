@@ -23,8 +23,10 @@ class FakeGh:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs.get("input")))
-        path = next(part for part in command[2:] if part.startswith("repos/"))
+        path = next(part for part in command[2:] if part.startswith(("repos/", "users/")))
         value = self.responses.get(path, {})
+        if value == 404:
+            return subprocess.CompletedProcess(command, 1, "", "gh: Not Found (HTTP 404)")
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
 
 
@@ -41,7 +43,7 @@ class PolicyTests(unittest.TestCase):
         return path
 
     def test_invalid_policies_are_refused(self):
-        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True},
+        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True, "review_check": ""},
                       {"agents_may_merge": False, "review_check": "agent-review"},
                       {"agents_may_merge": False, "required_checks": [""]},
                       {"agents_may_merge": False, "extra": 1}):
@@ -56,6 +58,10 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual([{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
                          ruleset["bypass_actors"])
         self.assertEqual(["~DEFAULT_BRANCH"], ruleset["conditions"]["ref_name"]["include"])
+
+    def test_ci_pushes_let_github_actions_bypass(self):
+        actors = merge_policy.ruleset({**HUMAN, "ci_pushes_default_branch": True})["bypass_actors"]
+        self.assertIn({"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}, actors)
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
@@ -110,6 +116,30 @@ class CheckTests(unittest.TestCase):
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
         self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
+
+    def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
+        import base64
+        ci = {"agents_may_merge": False, "ci_pushes_default_branch": True}
+        encoded = base64.b64encode(json.dumps(ci).encode()).decode()
+        responses = {
+            "users/o/repos?type=owner&per_page=100&page=1": [
+                {"full_name": "o/new"}, {"full_name": "o/core"}, {"full_name": "o/done"},
+                {"full_name": "o/secret", "private": True}, {"full_name": "o/copy", "fork": True}],
+            "repos/o/new/contents/.github/merge-policy.json": 404,
+            "repos/o/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"agents_may_merge": false}').decode()},
+            "repos/o/core/contents/.github/merge-policy.json": {"content": encoded},
+            "repos/o/done/rules/branches/main?per_page=100": rules({"agents_may_merge": False}),
+            "repos/o/new/rulesets?per_page=100": [],
+            "repos/o/core/rulesets?per_page=100": [],
+        }
+        for name in ("new", "core", "done"):
+            responses[f"repos/o/{name}"] = {"default_branch": "main"}
+        gh = FakeGh(responses)
+        results = {repository: action for repository, action, _ in merge_policy.sync(["o"], run=gh)}
+        self.assertEqual({"o/core": "created", "o/done": "current"}, results)
+        posted = {command[4]: json.loads(payload) for command, payload in gh.calls if "POST" in command}
+        self.assertEqual(["repos/o/core/rulesets"], list(posted))
+        self.assertEqual(2, len(posted["repos/o/core/rulesets"]["bypass_actors"]))
 
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
