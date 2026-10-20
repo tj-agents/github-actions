@@ -1,0 +1,23 @@
+name: Merge policy check
+description: Fail when the default branch's enforced GitHub rules differ from .github/merge-policy.json.
+
+inputs:
+  policy:
+    description: Path of the merge policy in the checked-out repository.
+    default: .github/merge-policy.json
+  token:
+    description: Token that can read the repository's rules.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compare enforced rules with the merge policy
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        POLICY: ${{ inputs.policy }}
+      run: |
+        python=$(command -v python3 || command -v python)
+        "$python" -B "$GITHUB_ACTION_PATH/../../../.agents/github-actions/utility/merge-policy/scripts/merge_policy.py" \
+          check --repo "$GITHUB_REPOSITORY" --policy "$POLICY"
