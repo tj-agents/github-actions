@@ -35,4 +35,4 @@ The ntfy topic is public to anyone who knows it; its obscurity provides noise re
 The free hosted service has quotas and a finite replay cache. Core reconciles after an offline gap. A
 malformed or forged hint can only request a bounded re-read of a repository in the allowed accounts.
 
-For an existing fleet, core records the current GitHub inventory and `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>` prepares each repository caller without cloning repositories. The scaffold already emits the same caller for new services.
+For an existing fleet, core records the current GitHub inventory and `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>` prepares each repository caller without cloning repositories. Preparation writes caller files for review; it does not edit GitHub or activate a channel.
