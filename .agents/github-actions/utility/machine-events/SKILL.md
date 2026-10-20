@@ -23,7 +23,7 @@ commit to use:
 python -B scripts/caller.py --revision <40-character-sha> --project <repository>
 ```
 
-The caller runs on every push to main. A job that pushes generated plugins with `GITHUB_TOKEN` must also
+The caller runs on every push to main and after a successful main push workflow named `ci` or `CI`, covering shared pipelines that publish generated files with GitHub's own token. A job that pushes generated plugins with `GITHUB_TOKEN` must also
 call the same action after its push with `published: 'true'`, because that push does not trigger another
 workflow. Set the repository's `MACHINE_EVENTS_TOPIC` Actions variable to the channel configured by core
 setup. Keep the action SHA pinned and update it with Dependabot.
@@ -31,3 +31,5 @@ setup. Keep the action SHA pinned and update it with Dependabot.
 The ntfy topic is public to anyone who knows it; its obscurity provides noise reduction, never authority.
 The free hosted service has quotas and a finite replay cache. Core reconciles after an offline gap. A
 malformed or forged hint can only request a bounded re-read of a repository in the allowed accounts.
+
+For an existing fleet, core records the current GitHub inventory and `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>` prepares each repository caller without cloning repositories. The scaffold already emits the same caller for new services.

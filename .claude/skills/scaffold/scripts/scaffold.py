@@ -802,6 +802,12 @@ def render_documents(config: object, repository_files: dict[str, str] | None = N
         documents[".github/workflows/prod.yml"] = workflow("Release (Production)", {"push": {"tags": ["v[0-9]+.[0-9]+.[0-9]+"]}}, "prod", False, jobs)
     for name, composite in provider["composites"].items():
         documents[f".github/actions/{name}/action.yml"] = {"name": name, "description": composite["description"], "inputs": composite["inputs"], "runs": {"using": "composite", "steps": composite["steps"]}}
+    documents[".github/workflows/machine-events.yml"] = {
+        "name": "machine-events", "on": {"push": {"branches": ["main"]}, "workflow_run": {"workflows": ["ci", "CI"], "types": ["completed"], "branches": ["main"]}},
+        "permissions": {"contents": "read"}, "concurrency": {"group": "machine-events-${{ github.ref }}", "cancel-in-progress": False}, "jobs": {"publish": {
+            "if": "vars.MACHINE_EVENTS_TOPIC != '' && (github.event_name == 'push' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository))", "runs-on": "ubuntu-latest", "timeout-minutes": 2,
+            "steps": [{"name": "Publish repository hint", "uses": "tj-agents/github-actions/.github/actions/machine-events@d72c7a7d6b896e90ac42b1967e54bdb2d4fd0360",
+                       "with": {"topic": "${{ vars.MACHINE_EVENTS_TOPIC }}", "published": "${{ github.event_name == 'workflow_run' }}"}}]}}}
     documents[".github/dependabot.yml"] = {"version": 2, "updates": [{"package-ecosystem": "github-actions", "directory": "/", "schedule": {"interval": "weekly"}, "groups": {"github-actions": {"patterns": ["*"]}}}]}
     return resolved, documents
 

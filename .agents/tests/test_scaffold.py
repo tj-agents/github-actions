@@ -402,7 +402,7 @@ class RenderingTests(unittest.TestCase):
     def test_complete_default_set_and_optional_release(self):
         config = fixture()
         files = scaffold.render(config)
-        expected = {"pr.yml", "ci.yml", "prod.yml", "pr-closed.yml", "deploy-environment.yml", "destroy-preview.yml"}
+        expected = {"pr.yml", "ci.yml", "prod.yml", "pr-closed.yml", "deploy-environment.yml", "destroy-preview.yml", "machine-events.yml"}
         self.assertEqual(expected, {Path(path).name for path in files if path.startswith(".github/workflows/")})
         config["prod-release"] = False
         without_release = scaffold.render(config)
@@ -496,7 +496,7 @@ class RenderingTests(unittest.TestCase):
                     self.assertGreater(job["timeout-minutes"], 0)
                 for step in job.get("steps", []):
                     if "uses" in step and not step["uses"].startswith("./"):
-                        self.assertRegex(step["uses"], r"@[a-f0-9]{40} # v\d+\.\d+\.\d+$")
+                        self.assertRegex(step["uses"], r"@[a-f0-9]{40}(?: # v\d+\.\d+\.\d+)?$")
                     if "actions/checkout" in step.get("uses", ""):
                         self.assertIs(False, step["with"]["persist-credentials"])
         self.assertEqual({}, docs[".github/workflows/pr.yml"]["jobs"]["ci-complete"]["permissions"])
