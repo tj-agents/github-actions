@@ -60,7 +60,8 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("@" + "a" * 40, value)
         self.assertIn("contents: read", value)
         self.assertNotIn("schedule:", value)
-        self.assertNotIn("secrets.", value)
+        self.assertIn("topic: ${{ secrets.MACHINE_EVENTS_TOPIC }}", value)
+        self.assertNotIn("secrets.GH_TOKEN", value)
         with self.assertRaises(ValueError):
             caller.render("main")
 
