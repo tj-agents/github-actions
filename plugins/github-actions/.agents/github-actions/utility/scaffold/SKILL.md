@@ -12,7 +12,7 @@ provenance: house
 # GitHub Actions project scaffold
 
 The stdlib Python writer makes `pr.yml`, `ci.yml`, `pr-closed.yml`, reusable deploy/destroy workflows,
-provider composite actions, Dependabot, workflow lint and the shared machine event caller. `prod.yml` is included by default; the sole
+provider composite actions, Dependabot and workflow lint. `prod.yml` is included by default; the sole
 option is `prod-release=false`. It writes one canonical shape. Azure supplies cloud-specific steps and
 identity data; this package owns the workflow files and job graph.
 

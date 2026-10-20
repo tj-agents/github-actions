@@ -11,6 +11,10 @@ provenance: house
 
 # Machine events
 
+Enroll publishers explicitly, only in Tommy's `tj-agents`, `Concertable` and `tomjseery` repositories.
+Selecting the GitHub Actions package or scaffolding a service does not enroll a repository. Employer
+repositories remain outside this personal channel.
+
 Core's machine setup owns the topic and background subscription. This package owns the publisher action
 at `.github/actions/machine-events` and the uniform caller. There is no admin credential in Actions;
 `MACHINE_EVENTS_TOPIC` is the only channel configuration. The caller consumes it as a repository secret so Actions masks the topic in public logs; core setup owns that secret and its canonical variable. Hints contain a repository and change categories,
