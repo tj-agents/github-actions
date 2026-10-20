@@ -7,7 +7,9 @@ GitHub actually enforces on the default branch with the policy, so CI can report
 """
 
 import argparse
+import base64
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +17,9 @@ import sys
 RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 ADMIN_ROLE_ID = 5
+GITHUB_ACTIONS_APP_ID = 15368
 
 
 class PolicyError(Exception):
@@ -29,9 +33,13 @@ def load_policy(path):
         raise PolicyError(f"cannot read {path}: {error}") from error
     except ValueError as error:
         raise PolicyError(f"{path} is not valid JSON: {error}") from error
+    return validate_policy(policy, path)
+
+
+def validate_policy(policy, path):
     if not isinstance(policy, dict):
         raise PolicyError(f"{path} must contain a JSON object")
-    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check"}
+    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
     if unknown:
         raise PolicyError(f"{path} has unknown keys: {', '.join(sorted(unknown))}")
     if not isinstance(policy.get("agents_may_merge"), bool):
@@ -39,10 +47,12 @@ def load_policy(path):
     checks = policy.get("required_checks", [])
     if not isinstance(checks, list) or not all(isinstance(check, str) and check.strip() for check in checks):
         raise PolicyError("required_checks must be a list of check names")
+    if not isinstance(policy.get("ci_pushes_default_branch", False), bool):
+        raise PolicyError("ci_pushes_default_branch must be true or false")
     review = policy.get("review_check")
     if policy["agents_may_merge"]:
-        if not isinstance(review, str) or not review.strip():
-            raise PolicyError("agents_may_merge requires review_check: the automated review check that must pass")
+        if review is not None and (not isinstance(review, str) or not review.strip()):
+            raise PolicyError("review_check must name the automated review check that must pass")
     elif review is not None:
         raise PolicyError("review_check applies only when agents_may_merge is true")
     return policy
@@ -50,9 +60,16 @@ def load_policy(path):
 
 def required_contexts(policy):
     contexts = list(policy.get("required_checks", []))
-    if policy["agents_may_merge"]:
+    if policy["agents_may_merge"] and policy.get("review_check"):
         contexts.append(policy["review_check"])
     return list(dict.fromkeys(contexts))
+
+
+def bypass_actors(policy):
+    actors = [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]
+    if policy.get("ci_pushes_default_branch"):
+        actors.append({"actor_id": GITHUB_ACTIONS_APP_ID, "actor_type": "Integration", "bypass_mode": "always"})
+    return actors
 
 
 def ruleset(policy):
@@ -79,7 +96,7 @@ def ruleset(policy):
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "bypass_actors": [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
+        "bypass_actors": bypass_actors(policy),
         "rules": rules,
     }
 
@@ -90,7 +107,8 @@ def gh(arguments, payload=None, run=subprocess.run):
         command += ["--input", "-"]
     try:
         result = run(command, input=None if payload is None else json.dumps(payload), capture_output=True,
-                     text=True, encoding="utf-8", errors="replace", timeout=GH_TIMEOUT_SECONDS, check=False)
+                     text=True, encoding="utf-8", errors="replace", timeout=GH_TIMEOUT_SECONDS, check=False,
+                     creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise PolicyError(f"gh api failed: {error}") from error
     if result.returncode:
@@ -153,6 +171,50 @@ def check(repository, policy, branch=None, run=subprocess.run):
     return drift(policy, rules)
 
 
+def repository_policy(repository, run=subprocess.run):
+    try:
+        content = gh([f"repos/{repository}/contents/{DEFAULT_POLICY.as_posix()}"], run=run)
+    except PolicyError as error:
+        if "HTTP 404" in str(error):
+            return None
+        raise
+    try:
+        policy = json.loads(base64.b64decode(content["content"]).decode("utf-8"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise PolicyError(f"{repository}/{DEFAULT_POLICY.as_posix()} is not valid JSON") from error
+    return validate_policy(policy, f"{repository}/{DEFAULT_POLICY.as_posix()}")
+
+
+def public_repositories(owner, run=subprocess.run):
+    repositories, page = [], 1
+    while True:
+        batch = gh([f"users/{owner}/repos?type=owner&per_page=100&page={page}"], run=run) or []
+        repositories += [item["full_name"] for item in batch
+                         if not item.get("private") and not item.get("fork") and not item.get("archived")]
+        if len(batch) < 100:
+            return repositories
+        page += 1
+
+
+def sync(owners, run=subprocess.run):
+    """Apply each public repository's declared merge policy wherever GitHub has drifted from it."""
+    results = []
+    for owner in owners:
+        for repository in public_repositories(owner, run=run):
+            try:
+                policy = repository_policy(repository, run=run)
+                if policy is None:
+                    continue
+                if not check(repository, policy, run=run):
+                    results.append((repository, "current", []))
+                    continue
+                action = apply(repository, policy, run=run)["action"]
+                results.append((repository, action, check(repository, policy, run=run)))
+            except PolicyError as error:
+                results.append((repository, "failed", [str(error)]))
+    return results
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -163,8 +225,16 @@ def main(argv=None):
             command.add_argument("--repo", required=True, help="OWNER/NAME")
     commands.choices["apply"].add_argument("--dry-run", action="store_true")
     commands.choices["check"].add_argument("--branch")
+    commands.add_parser("sync").add_argument("--owner", action="append", required=True)
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "sync":
+            results = sync(arguments.owner)
+            for repository, action, problems in results:
+                if action != "current" or problems:
+                    print(f"{action} {repository}" + (": " + "; ".join(problems) if problems else ""))
+            print(f"{len(results)} public repositories checked")
+            return 1 if any(problems for _, _, problems in results) else 0
         policy = load_policy(arguments.policy)
         if arguments.command == "render":
             print(json.dumps(ruleset(policy), indent=2))
