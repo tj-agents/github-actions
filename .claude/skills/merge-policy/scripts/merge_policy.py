@@ -188,6 +188,15 @@ def repository_policy(repository, run=subprocess.run, ref=None):
     return validate_policy(policy, f"{repository}/{DEFAULT_POLICY.as_posix()}")
 
 
+def matches_owned(actual, desired):
+    if isinstance(desired, dict):
+        return isinstance(actual, dict) and all(matches_owned(actual.get(key), value) for key, value in desired.items())
+    if isinstance(desired, list):
+        return (isinstance(actual, list) and len(actual) == len(desired)
+                and all(any(matches_owned(item, wanted) for item in actual) for wanted in desired))
+    return actual == desired
+
+
 def reconcile(repository, run=subprocess.run):
     if not re.fullmatch(r"(?:tj-agents|Concertable|tomjseery)/[A-Za-z0-9_.-]+", repository, re.IGNORECASE):
         raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
@@ -204,7 +213,7 @@ def reconcile(repository, run=subprocess.run):
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) == 1:
         actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
-        if all(actual.get(key) == value for key, value in desired.items()):
+        if matches_owned(actual, desired):
             return {"repository": repository, "action": "current", "revision": head}
     action = apply(repository, policy, run=run)["action"]
     problems = check(repository, policy, quote(branch, safe=""), run=run)

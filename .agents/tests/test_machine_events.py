@@ -44,6 +44,17 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual({"v": 1}, json.loads(request.data))
         self.assertEqual(20, opener.call_args.kwargs["timeout"])
 
+    def test_actions_push_payload_uses_compare_files_and_truncation_is_conservative(self):
+        event = {"ref": "refs/heads/main", "before": "a" * 40, "after": "b" * 40}
+        opener = mock.MagicMock()
+        opener.return_value.__enter__.return_value.read.return_value = json.dumps({"files": [{"filename": ".github/merge-policy.json"}]}).encode()
+        paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
+        self.assertIn("merge-policy", publish.hint(event, "tj-agents/core", paths)["changes"])
+        self.assertEqual(1, opener.call_count)
+        opener.return_value.__enter__.return_value.read.return_value = json.dumps({"files": [{"filename": "x"}] * 300}).encode()
+        paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
+        self.assertIn("marketplace", publish.hint(event, "tj-agents/core", paths)["changes"])
+
     def test_uniform_caller_has_read_only_permissions_and_immutable_action(self):
         value = caller.render("a" * 40)
         self.assertIn("@" + "a" * 40, value)

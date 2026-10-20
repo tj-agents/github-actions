@@ -12,17 +12,26 @@ def render(revision):
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: [ci, CI]
+    types: [completed]
+    branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: machine-events-${{{{ github.ref }}}}
+  cancel-in-progress: false
 jobs:
   publish:
-    if: vars.MACHINE_EVENTS_TOPIC != ''
+    if: vars.MACHINE_EVENTS_TOPIC != '' && (github.event_name == 'push' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - uses: tj-agents/github-actions/.github/actions/machine-events@{revision}
+      - name: Publish repository hint
+        uses: tj-agents/github-actions/.github/actions/machine-events@{revision}
         with:
           topic: ${{{{ vars.MACHINE_EVENTS_TOPIC }}}}
+          published: ${{{{ github.event_name == 'workflow_run' }}}}
 """
 
 

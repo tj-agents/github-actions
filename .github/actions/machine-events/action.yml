@@ -13,6 +13,7 @@ runs:
     - name: Publish the hint
       shell: bash
       env:
+        GH_TOKEN: ${{ github.token }}
         MACHINE_EVENTS_TOPIC: ${{ inputs.topic }}
         MACHINE_EVENTS_PUBLISHED: ${{ inputs.published }}
       run: |
