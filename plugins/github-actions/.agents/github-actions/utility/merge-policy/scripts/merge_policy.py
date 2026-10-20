@@ -9,6 +9,7 @@ GitHub actually enforces on the default branch with the policy, so CI can report
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import sys
 RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 ADMIN_ROLE_ID = 5
 GITHUB_ACTIONS_APP_ID = 15368
 
@@ -105,7 +107,8 @@ def gh(arguments, payload=None, run=subprocess.run):
         command += ["--input", "-"]
     try:
         result = run(command, input=None if payload is None else json.dumps(payload), capture_output=True,
-                     text=True, encoding="utf-8", errors="replace", timeout=GH_TIMEOUT_SECONDS, check=False)
+                     text=True, encoding="utf-8", errors="replace", timeout=GH_TIMEOUT_SECONDS, check=False,
+                     creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise PolicyError(f"gh api failed: {error}") from error
     if result.returncode:
