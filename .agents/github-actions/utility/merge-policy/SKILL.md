@@ -47,6 +47,11 @@ python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.githu
 creation and whenever the flag changes; agents use `--dry-run` only. GitHub Free enforces repository
 rulesets only on public repositories, so `apply` fails on a private repository in a Free organization.
 
+`sync --owner X [--owner Y]` covers every public, non-fork repository of those accounts: it reads each
+repository's `.github/merge-policy.json` (default `{"agents_may_merge": false}` when absent) and applies it
+wherever GitHub has drifted, so a new repository is covered on the next run. It needs admin rights, so it
+runs as Tommy, never as an agent.
+
 `check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
 must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and
 2 on an invalid policy or failed API call. In CI, call the composite action pinned to a commit SHA:
