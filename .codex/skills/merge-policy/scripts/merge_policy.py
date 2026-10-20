@@ -11,8 +11,10 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+from urllib.parse import quote
 
 RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
@@ -171,9 +173,10 @@ def check(repository, policy, branch=None, run=subprocess.run):
     return drift(policy, rules)
 
 
-def repository_policy(repository, run=subprocess.run):
+def repository_policy(repository, run=subprocess.run, ref=None):
     try:
-        content = gh([f"repos/{repository}/contents/{DEFAULT_POLICY.as_posix()}"], run=run)
+        suffix = f"?ref={ref}" if ref else ""
+        content = gh([f"repos/{repository}/contents/{DEFAULT_POLICY.as_posix()}{suffix}"], run=run)
     except PolicyError as error:
         if "HTTP 404" in str(error):
             return None
@@ -183,6 +186,31 @@ def repository_policy(repository, run=subprocess.run):
     except (KeyError, TypeError, ValueError) as error:
         raise PolicyError(f"{repository}/{DEFAULT_POLICY.as_posix()} is not valid JSON") from error
     return validate_policy(policy, f"{repository}/{DEFAULT_POLICY.as_posix()}")
+
+
+def reconcile(repository, run=subprocess.run):
+    if not re.fullmatch(r"(?:tj-agents|Concertable|tomjseery)/[A-Za-z0-9_.-]+", repository, re.IGNORECASE):
+        raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
+    metadata = gh([f"repos/{repository}"], run=run)
+    if metadata.get("archived") or metadata.get("fork"):
+        return {"repository": repository, "action": "skipped"}
+    branch = metadata["default_branch"]
+    head = gh([f"repos/{repository}/commits/{quote(branch, safe='')}"], run=run)["sha"]
+    policy = repository_policy(repository, run=run, ref=head)
+    if policy is None:
+        return {"repository": repository, "action": "undeclared", "revision": head}
+    desired = ruleset(policy)
+    existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
+                if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
+    if len(existing) == 1:
+        actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
+        if all(actual.get(key) == value for key, value in desired.items()):
+            return {"repository": repository, "action": "current", "revision": head}
+    action = apply(repository, policy, run=run)["action"]
+    problems = check(repository, policy, quote(branch, safe=""), run=run)
+    if problems:
+        raise PolicyError(f"{repository}: {'; '.join(problems)}")
+    return {"repository": repository, "action": action, "revision": head}
 
 
 def public_repositories(owner, run=subprocess.run):
@@ -226,8 +254,12 @@ def main(argv=None):
     commands.choices["apply"].add_argument("--dry-run", action="store_true")
     commands.choices["check"].add_argument("--branch")
     commands.add_parser("sync").add_argument("--owner", action="append", required=True)
+    commands.add_parser("reconcile").add_argument("--repo", required=True)
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "reconcile":
+            print(json.dumps(reconcile(arguments.repo)))
+            return 0
         if arguments.command == "sync":
             results = sync(arguments.owner)
             for repository, action, problems in results:
