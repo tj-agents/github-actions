@@ -22,6 +22,8 @@ A repository records who may merge in `.github/merge-policy.json`:
 
 - `agents_may_merge: false`: every PR needs one approval of its most recent push. Agents push as the bot
   account, so the approver is Tommy.
+- `ci_pushes_default_branch: true`: GitHub Actions may push to the default branch, for a post-merge
+  job that commits generated files.
 - `agents_may_merge: true`: no approval, but `review_check` (the automated review job on the PR head) must
   pass, along with `required_checks`.
 
