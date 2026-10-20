@@ -15,6 +15,7 @@ import sys
 RULESET_NAME = "merge-policy"
 DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
+ADMIN_ROLE_ID = 5
 
 
 class PolicyError(Exception):
@@ -78,7 +79,7 @@ def ruleset(policy):
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "bypass_actors": [],
+        "bypass_actors": [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
         "rules": rules,
     }
 
@@ -114,6 +115,9 @@ def apply(repository, policy, dry_run=False, run=subprocess.run):
 
 def drift(policy, rules):
     """Return how the enforced default-branch rules differ from the policy."""
+    if not rules:
+        return ["no rules are enforced: the merge-policy ruleset is missing, or this is a private repository "
+                "on GitHub Free, which cannot enforce rulesets"]
     by_type = {}
     for rule in rules:
         by_type.setdefault(rule.get("type"), []).append(rule.get("parameters") or {})
@@ -133,6 +137,8 @@ def drift(policy, rules):
             problems.append("no approval is required")
         if reviews and not any(item.get("require_last_push_approval") for item in reviews):
             problems.append("the most recent push does not need approval")
+        if reviews and not any(item.get("dismiss_stale_reviews_on_push") for item in reviews):
+            problems.append("a new push does not dismiss earlier approvals")
     enforced = {check.get("context") for item in by_type.get("required_status_checks", [])
                 for check in item.get("required_status_checks", [])}
     missing = [context for context in required_contexts(policy) if context not in enforced]

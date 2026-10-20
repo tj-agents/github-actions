@@ -25,7 +25,9 @@ A repository records who may merge in `.github/merge-policy.json`:
 - `agents_may_merge: true`: no approval, but `review_check` (the automated review job on the PR head) must
   pass, along with `required_checks`.
 
-Every policy requires a PR, blocks deletion and force-push of the default branch, and grants no bypass.
+Every policy requires a PR and blocks deletion and force-push of the default branch. Repository admins
+may bypass only through a PR, so Tommy can always merge his own push. The bot account must never be an
+admin: that, not this script, stops an agent from merging past the policy or applying a ruleset.
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
 ## Commands
@@ -43,7 +45,8 @@ python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.githu
 creation and whenever the flag changes; agents use `--dry-run` only. GitHub Free enforces repository
 rulesets only on public repositories, so `apply` fails on a private repository in a Free organization.
 
-`check` compares the rules GitHub enforces on the default branch with the policy. It exits 1 on drift and
+`check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
+must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and
 2 on an invalid policy or failed API call. In CI, call the composite action pinned to a commit SHA:
 
 ```yaml
