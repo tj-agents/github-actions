@@ -118,7 +118,20 @@ def gh(arguments, payload=None, run=subprocess.run):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def require_personal_owner(owner):
+    if owner.lower() not in {"tj-agents", "concertable", "tomjseery"}:
+        raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
+
+
+def require_personal_repository(repository):
+    owner, separator, name = repository.partition("/")
+    require_personal_owner(owner)
+    if not separator or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}", name):
+        raise PolicyError("repository must be OWNER/NAME")
+
+
 def apply(repository, policy, dry_run=False, run=subprocess.run):
+    require_personal_repository(repository)
     desired = ruleset(policy)
     existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
@@ -198,8 +211,7 @@ def matches_owned(actual, desired):
 
 
 def reconcile(repository, run=subprocess.run):
-    if not re.fullmatch(r"(?:tj-agents|Concertable|tomjseery)/[A-Za-z0-9_.-]+", repository, re.IGNORECASE):
-        raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
+    require_personal_repository(repository)
     metadata = gh([f"repos/{repository}"], run=run)
     if metadata.get("archived") or metadata.get("fork"):
         return {"repository": repository, "action": "skipped"}
@@ -235,6 +247,9 @@ def public_repositories(owner, run=subprocess.run):
 
 def sync(owners, run=subprocess.run):
     """Apply each public repository's declared merge policy wherever GitHub has drifted from it."""
+    owners = tuple(owners)
+    for owner in owners:
+        require_personal_owner(owner)
     results = []
     for owner in owners:
         for repository in public_repositories(owner, run=run):
