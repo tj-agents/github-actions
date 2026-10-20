@@ -14,6 +14,6 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Publish repository hint
-        uses: tj-agents/github-actions/.github/actions/machine-events@d72c7a7d6b896e90ac42b1967e54bdb2d4fd0360
+        uses: tj-agents/github-actions/.github/actions/machine-events@d45d8a70dc1309ca02d304c8e3c58e493c263f89
         with:
           topic: ${{ vars.MACHINE_EVENTS_TOPIC }}

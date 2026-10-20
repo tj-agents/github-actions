@@ -23,7 +23,7 @@ commit to use:
 python -B scripts/caller.py --revision <40-character-sha> --project <repository>
 ```
 
-The caller runs on every push to main and after a successful main push workflow named `ci` or `CI`, covering shared pipelines that publish generated files with GitHub's own token. A job that pushes generated plugins with `GITHUB_TOKEN` must also
+The caller runs on every push to main. Shared generation pipelines invoke the publisher directly after their generated-file push. A job that pushes generated plugins with `GITHUB_TOKEN` must also
 call the same action after its push with `published: 'true'`, because that push does not trigger another
 workflow. Set the repository's `MACHINE_EVENTS_TOPIC` Actions variable to the channel configured by core
 setup. Keep the action SHA pinned and update it with Dependabot.
