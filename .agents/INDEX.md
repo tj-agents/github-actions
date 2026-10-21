@@ -7,6 +7,7 @@ Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's n
 - `build` — contract — core — `.agents/github-actions/contract/build/SKILL.md`
 - `domain-design` — contract — core — `.agents/github-actions/contract/domain-design/SKILL.md`
 - `errors` — contract — core — `.agents/github-actions/contract/errors/SKILL.md`
+- `explanation` — contract — core — `.agents/github-actions/contract/explanation/SKILL.md`
 - `libraries` — contract — core — `.agents/github-actions/contract/libraries/SKILL.md`
 - `security` — contract — core — `.agents/github-actions/contract/security/SKILL.md`
 - `structure` — contract — core — `.agents/github-actions/contract/structure/SKILL.md`
