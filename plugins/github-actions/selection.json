@@ -10,6 +10,7 @@
       "build",
       "domain-design",
       "errors",
+      "explanation",
       "libraries",
       "machine-events",
       "security",
@@ -73,6 +74,20 @@
     },
     {
       "name": "errors",
+      "kind": "contract",
+      "profile": "core",
+      "applicability": [
+        "GitHub Actions projects"
+      ],
+      "requires": [
+        "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "explanation",
       "kind": "contract",
       "profile": "core",
       "applicability": [
