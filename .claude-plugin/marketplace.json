@@ -1,5 +1,5 @@
 {
-  "name": "github-actions-agents",
+  "name": "tj-agents",
   "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
   "owner": {
     "name": "Tommy Seery"
@@ -17,8 +17,5 @@
         "workflows"
       ]
     }
-  ],
-  "allowCrossMarketplaceDependenciesOn": [
-    "tj-agents"
   ]
 }

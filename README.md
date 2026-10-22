@@ -2,7 +2,7 @@
 
 Tommy's GitHub Actions conventions and canonical deployed-service workflow writer.
 
-Published as plugin `github-actions` from this repository's `github-actions-agents` marketplace.
+Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
 
 ## Skills
 
