@@ -1,5 +1,4 @@
 {
-  "name": "github-actions-agents",
   "description": "Tommy's GitHub Actions workflow conventions for CI and CD.",
   "owner": {
     "name": "Tommy Seery"
