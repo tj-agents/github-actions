@@ -1,23 +1,19 @@
 {
   "schema_version": 1,
-  "plugin": "github-actions-agents/github-actions",
+  "plugin": "tj-agents/github-actions",
   "source_roots": [
     ".agents/github-actions"
   ],
   "requires": {
     "marketplaces": [
       {
-        "id": "github-actions-agents",
-        "repository": "tj-agents/github-actions"
-      },
-      {
-        "id": "base-agents",
-        "repository": "tj-agents/core"
+        "id": "tj-agents",
+        "repository": "tj-agents/marketplace"
       }
     ],
     "plugins": [
-      "github-actions-agents/github-actions",
-      "base-agents/base"
+      "tj-agents/github-actions",
+      "tj-agents/base"
     ],
     "hooks": [],
     "permissions": {
