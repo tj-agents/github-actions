@@ -21,7 +21,6 @@ DEFAULT_POLICY = Path(".github/merge-policy.json")
 GH_TIMEOUT_SECONDS = 60
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 ADMIN_ROLE_ID = 5
-GITHUB_ACTIONS_APP_ID = 15368
 
 
 class PolicyError(Exception):
@@ -70,7 +69,7 @@ def required_contexts(policy):
 def bypass_actors(policy):
     actors = [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]
     if policy.get("ci_pushes_default_branch"):
-        actors.append({"actor_id": GITHUB_ACTIONS_APP_ID, "actor_type": "Integration", "bypass_mode": "always"})
+        actors.append({"actor_type": "DeployKey", "bypass_mode": "always"})
     return actors
 
 

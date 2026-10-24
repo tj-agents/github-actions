@@ -59,9 +59,9 @@ class PolicyTests(unittest.TestCase):
                          ruleset["bypass_actors"])
         self.assertEqual(["~DEFAULT_BRANCH"], ruleset["conditions"]["ref_name"]["include"])
 
-    def test_ci_pushes_let_github_actions_bypass(self):
+    def test_ci_pushes_let_deploy_keys_bypass(self):
         actors = merge_policy.ruleset({**HUMAN, "ci_pushes_default_branch": True})["bypass_actors"]
-        self.assertIn({"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}, actors)
+        self.assertIn({"actor_type": "DeployKey", "bypass_mode": "always"}, actors)
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
