@@ -138,6 +138,7 @@ def apply(repository, policy, dry_run=False, run=subprocess.run):
         raise PolicyError(f"{repository} has {len(existing)} rulesets named {RULESET_NAME}; remove the extras")
     if dry_run:
         return {"repository": repository, "action": "update" if existing else "create", "ruleset": desired}
+    gh(["--method", "PATCH", f"repos/{repository}"], {"allow_auto_merge": True}, run=run)
     if existing:
         gh(["--method", "PUT", f"repos/{repository}/rulesets/{existing[0]['id']}"], desired, run=run)
         return {"repository": repository, "action": "updated"}
@@ -180,9 +181,13 @@ def drift(policy, rules):
 
 
 def check(repository, policy, branch=None, run=subprocess.run):
-    branch = branch or gh([f"repos/{repository}"], run=run)["default_branch"]
+    metadata = gh([f"repos/{repository}"], run=run)
+    branch = branch or metadata["default_branch"]
     rules = gh([f"repos/{repository}/rules/branches/{branch}?per_page=100"], run=run) or []
-    return drift(policy, rules)
+    problems = drift(policy, rules)
+    if metadata.get("allow_auto_merge") is False:
+        problems.append("auto-merge is disabled, so an approval or passing checks cannot land a PR")
+    return problems
 
 
 def repository_policy(repository, run=subprocess.run, ref=None):
