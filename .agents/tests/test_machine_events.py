@@ -68,7 +68,7 @@ class PublisherTests(unittest.TestCase):
 
 class ReconcileTests(unittest.TestCase):
     def responses(self, policy=HUMAN):
-        return {"repos/tj-agents/core": {"default_branch": "main"},
+        return {"repos/tj-agents/core": {"default_branch": "main", "allow_auto_merge": policy.get("enabled", True)},
                 "repos/tj-agents/core/commits/main": {"sha": "b" * 40},
                 "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40:
                     {"content": base64.b64encode(json.dumps(policy).encode()).decode()},
@@ -79,7 +79,7 @@ class ReconcileTests(unittest.TestCase):
     def test_current_committed_policy_is_read_at_authoritative_sha_without_write(self):
         gh = FakeGh(self.responses())
         self.assertEqual("current", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-        self.assertFalse(any("PUT" in command or "POST" in command for command, _ in gh.calls))
+        self.assertFalse(any("--method" in command for command, _ in gh.calls))
 
     def test_changed_bypass_is_repaired_even_when_effective_rules_look_current(self):
         responses = self.responses()
