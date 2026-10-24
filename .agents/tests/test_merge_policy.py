@@ -44,6 +44,10 @@ class FakeGh:
                 self.responses[f"{repository}/rules/branches/main?per_page=100"] = (
                     desired["rules"] if desired["enforcement"] == "active" else []
                 )
+        if value == 409:
+            return subprocess.CompletedProcess(command, 1, "", "gh: Git Repository is empty. (HTTP 409)")
+        if value == 500:
+            return subprocess.CompletedProcess(command, 1, "", "gh: Server Error (HTTP 500)")
         if value == 404:
             return subprocess.CompletedProcess(command, 1, "", "gh: Not Found (HTTP 404)")
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
@@ -216,6 +220,21 @@ class CheckTests(unittest.TestCase):
             [("tj-agents/core", "current", []), ("tj-agents/done", "current", [])],
             merge_policy.sync(["tj-agents"], run=gh),
         )
+        self.assertFalse(any("--method" in command for command, _ in gh.calls))
+
+    def test_sync_skips_empty_repositories_and_preserves_other_api_failures(self):
+        gh = FakeGh({
+            "users/tj-agents/repos?type=owner&per_page=100&page=1": [
+                {"full_name": "tj-agents/empty"}, {"full_name": "tj-agents/broken"}],
+            "repos/tj-agents/empty": {"default_branch": "main"},
+            "repos/tj-agents/empty/commits/main": 409,
+            "repos/tj-agents/broken": {"default_branch": "main"},
+            "repos/tj-agents/broken/commits/main": 500,
+        })
+        result = merge_policy.sync(["tj-agents"], run=gh)
+        self.assertEqual(1, len(result))
+        self.assertEqual(("tj-agents/broken", "failed"), result[0][:2])
+        self.assertIn("HTTP 500", result[0][2][0])
         self.assertFalse(any("--method" in command for command, _ in gh.calls))
 
     def test_reconcile_repairs_only_auto_merge_drift(self):

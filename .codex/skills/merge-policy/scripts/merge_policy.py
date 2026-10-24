@@ -249,7 +249,12 @@ def reconcile(repository, run=subprocess.run, check_only=False):
     if metadata.get("archived") or metadata.get("fork"):
         return {"repository": repository, "action": "skipped"}
     branch = metadata["default_branch"]
-    head = gh([f"repos/{repository}/commits/{quote(branch, safe='')}"], run=run)["sha"]
+    try:
+        head = gh([f"repos/{repository}/commits/{quote(branch, safe='')}"], run=run)["sha"]
+    except PolicyError as error:
+        if "HTTP 409" in str(error) and "git repository is empty" in str(error).lower():
+            return {"repository": repository, "action": "undeclared"}
+        raise
     policy = repository_policy(repository, run=run, ref=head)
     if policy is None:
         return {"repository": repository, "action": "undeclared", "revision": head}
