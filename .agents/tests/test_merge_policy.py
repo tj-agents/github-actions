@@ -59,9 +59,9 @@ class PolicyTests(unittest.TestCase):
                          ruleset["bypass_actors"])
         self.assertEqual(["~DEFAULT_BRANCH"], ruleset["conditions"]["ref_name"]["include"])
 
-    def test_ci_pushes_let_github_actions_bypass(self):
+    def test_ci_pushes_let_deploy_keys_bypass(self):
         actors = merge_policy.ruleset({**HUMAN, "ci_pushes_default_branch": True})["bypass_actors"]
-        self.assertIn({"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}, actors)
+        self.assertIn({"actor_type": "DeployKey", "bypass_mode": "always"}, actors)
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
@@ -104,6 +104,12 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual("updated", merge_policy.apply("tj-agents/r", HUMAN, run=gh)["action"])
         self.assertEqual(["--method", "PUT", "repos/tj-agents/r/rulesets/7"], gh.calls[-1][0][2:5])
 
+    def test_apply_enables_auto_merge_so_an_approval_lands_the_pr(self):
+        gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
+        merge_policy.apply("tj-agents/r", HUMAN, run=gh)
+        patch = next(call for call in gh.calls if call[0][2:5] == ["--method", "PATCH", "repos/tj-agents/r"])
+        self.assertEqual({"allow_auto_merge": True}, json.loads(patch[1]))
+
     def test_dry_run_never_writes(self):
         gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
         self.assertEqual("create", merge_policy.apply("tj-agents/r", HUMAN, dry_run=True, run=gh)["action"])
@@ -124,6 +130,11 @@ class CheckTests(unittest.TestCase):
     def test_applied_policy_has_no_drift(self):
         self.assertEqual([], self.check(HUMAN, rules(HUMAN)))
         self.assertEqual([], self.check(AGENTS, rules(AGENTS)))
+
+    def test_disabled_auto_merge_is_drift(self):
+        gh = FakeGh({"repos/tj-agents/r": {"default_branch": "main", "allow_auto_merge": False},
+                     "repos/tj-agents/r/rules/branches/main?per_page=100": rules(HUMAN)})
+        self.assertEqual(1, len(merge_policy.check("tj-agents/r", HUMAN, run=gh)))
 
     def test_no_rules_names_the_free_plan_cause(self):
         problems = self.check(HUMAN, [])

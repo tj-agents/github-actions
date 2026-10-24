@@ -27,13 +27,16 @@ A repository records who may merge in `.github/merge-policy.json`:
 
 - `agents_may_merge: false`: every PR needs one approval of its most recent push. Agents push as the bot
   account, so the approver is Tommy.
-- `ci_pushes_default_branch: true`: GitHub Actions may push to the default branch, for a post-merge
-  job that commits generated files.
+- `ci_pushes_default_branch: true`: deploy keys may push to the default branch, for a post-merge job
+  that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
+  actor, so that job pushes with a write deploy key whose private key is a secret of an environment
+  limited to the default branch; a workflow on any other branch cannot read it.
 - `agents_may_merge: true`: no approval; agents merge once `required_checks` and the optional
   `review_check` (an automated review job on the PR head) pass. A repository without the file has no gate.
 
-Every policy requires a PR and blocks deletion and force-push of the default branch. Repository admins
-may bypass only through a PR, so Tommy can always merge his own push. The bot account must never be an
+Every policy requires a PR and blocks deletion and force-push of the default branch. The repository admin
+role may bypass only through a PR; an organization owner does not hold that role, so in `tj-agents` a
+PR Tommy pushed himself needs an approval from someone else. The bot account must never be an
 admin: that, not this script, stops an agent from merging past the policy or applying a ruleset.
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
@@ -48,7 +51,8 @@ python -B scripts/merge_policy.py apply --repo OWNER/NAME --policy <repo>/.githu
 python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.github/merge-policy.json
 ```
 
-`apply` creates or updates the ruleset and needs repository admin rights. Tommy runs it, at repository
+`apply` enables auto-merge, so an approval or passing checks land a PR without a merge click, then
+creates or updates the ruleset. It needs repository admin rights. Tommy runs it, at repository
 creation and whenever the flag changes; agents use `--dry-run` only. GitHub Free enforces repository
 rulesets only on public repositories, so `apply` fails on a private repository in a Free organization.
 
