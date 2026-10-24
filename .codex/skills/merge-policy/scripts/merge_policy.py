@@ -40,11 +40,13 @@ def load_policy(path):
 def validate_policy(policy, path):
     if not isinstance(policy, dict):
         raise PolicyError(f"{path} must contain a JSON object")
-    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
+    unknown = set(policy) - {"enabled", "agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
     if unknown:
         raise PolicyError(f"{path} has unknown keys: {', '.join(sorted(unknown))}")
     if not isinstance(policy.get("agents_may_merge"), bool):
         raise PolicyError(f"{path} must set agents_may_merge to true or false")
+    if not isinstance(policy.get("enabled", True), bool):
+        raise PolicyError("enabled must be true or false")
     checks = policy.get("required_checks", [])
     if not isinstance(checks, list) or not all(isinstance(check, str) and check.strip() for check in checks):
         raise PolicyError("required_checks must be a list of check names")
@@ -95,7 +97,7 @@ def ruleset(policy):
     return {
         "name": RULESET_NAME,
         "target": "branch",
-        "enforcement": "active",
+        "enforcement": "active" if policy.get("enabled", True) else "disabled",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
         "bypass_actors": bypass_actors(policy),
         "rules": rules,
@@ -127,6 +129,8 @@ def require_personal_repository(repository):
     require_personal_owner(owner)
     if not separator or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}", name):
         raise PolicyError("repository must be OWNER/NAME")
+    if repository.lower() == "tj-agents/infonetica":
+        raise PolicyError("tj-agents/infonetica is an employer project outside personal merge policy")
 
 
 def apply(repository, policy, dry_run=False, run=subprocess.run):
@@ -138,12 +142,25 @@ def apply(repository, policy, dry_run=False, run=subprocess.run):
         raise PolicyError(f"{repository} has {len(existing)} rulesets named {RULESET_NAME}; remove the extras")
     if dry_run:
         return {"repository": repository, "action": "update" if existing else "create", "ruleset": desired}
-    gh(["--method", "PATCH", f"repos/{repository}"], {"allow_auto_merge": True}, run=run)
+    enabled = policy.get("enabled", True)
+    metadata = gh([f"repos/{repository}"], run=run)
+    setting_changed = metadata.get("allow_auto_merge") is not enabled
+    if setting_changed and not enabled:
+        gh(["--method", "PATCH", f"repos/{repository}"], {"allow_auto_merge": False}, run=run)
     if existing:
-        gh(["--method", "PUT", f"repos/{repository}/rulesets/{existing[0]['id']}"], desired, run=run)
-        return {"repository": repository, "action": "updated"}
-    gh(["--method", "POST", f"repos/{repository}/rulesets"], desired, run=run)
-    return {"repository": repository, "action": "created"}
+        endpoint = f"repos/{repository}/rulesets/{existing[0]['id']}"
+        actual = gh([endpoint], run=run)
+        if matches_owned(actual, desired):
+            action = "updated" if setting_changed else "current"
+        else:
+            gh(["--method", "PUT", endpoint], desired, run=run)
+            action = "updated"
+    else:
+        gh(["--method", "POST", f"repos/{repository}/rulesets"], desired, run=run)
+        action = "created"
+    if setting_changed and enabled:
+        gh(["--method", "PATCH", f"repos/{repository}"], {"allow_auto_merge": True}, run=run)
+    return {"repository": repository, "action": action}
 
 
 def drift(policy, rules):
@@ -182,11 +199,23 @@ def drift(policy, rules):
 
 def check(repository, policy, branch=None, run=subprocess.run):
     metadata = gh([f"repos/{repository}"], run=run)
-    branch = branch or metadata["default_branch"]
-    rules = gh([f"repos/{repository}/rules/branches/{branch}?per_page=100"], run=run) or []
-    problems = drift(policy, rules)
-    if metadata.get("allow_auto_merge") is False:
-        problems.append("auto-merge is disabled, so an approval or passing checks cannot land a PR")
+    enabled = policy.get("enabled", True)
+    if enabled:
+        branch = branch or metadata["default_branch"]
+        rules = gh([f"repos/{repository}/rules/branches/{branch}?per_page=100"], run=run) or []
+        problems = drift(policy, rules)
+    else:
+        existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
+                    if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
+        problems = []
+        if len(existing) > 1:
+            problems.append("multiple repository rulesets are named merge-policy")
+        elif existing:
+            actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
+            if not matches_owned(actual, ruleset(policy)):
+                problems.append("the owned merge-policy ruleset does not match the disabled policy")
+    if metadata.get("allow_auto_merge") is not enabled:
+        problems.append("repository auto-merge does not match the policy's enabled setting")
     return problems
 
 
@@ -214,7 +243,7 @@ def matches_owned(actual, desired):
     return actual == desired
 
 
-def reconcile(repository, run=subprocess.run):
+def reconcile(repository, run=subprocess.run, check_only=False):
     require_personal_repository(repository)
     metadata = gh([f"repos/{repository}"], run=run)
     if metadata.get("archived") or metadata.get("fork"):
@@ -229,8 +258,10 @@ def reconcile(repository, run=subprocess.run):
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) == 1:
         actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
-        if matches_owned(actual, desired):
+        if matches_owned(actual, desired) and metadata.get("allow_auto_merge") is policy.get("enabled", True):
             return {"repository": repository, "action": "current", "revision": head}
+    if check_only:
+        return {"repository": repository, "action": "drift", "revision": head}
     action = apply(repository, policy, run=run)["action"]
     problems = check(repository, policy, quote(branch, safe=""), run=run)
     if problems:
@@ -243,7 +274,8 @@ def public_repositories(owner, run=subprocess.run):
     while True:
         batch = gh([f"users/{owner}/repos?type=owner&per_page=100&page={page}"], run=run) or []
         repositories += [item["full_name"] for item in batch
-                         if not item.get("private") and not item.get("fork") and not item.get("archived")]
+                         if not item.get("private") and not item.get("fork") and not item.get("archived")
+                         and item["full_name"].lower() != "tj-agents/infonetica"]
         if len(batch) < 100:
             return repositories
         page += 1
@@ -258,14 +290,9 @@ def sync(owners, run=subprocess.run):
     for owner in owners:
         for repository in public_repositories(owner, run=run):
             try:
-                policy = repository_policy(repository, run=run)
-                if policy is None:
-                    continue
-                if not check(repository, policy, run=run):
-                    results.append((repository, "current", []))
-                    continue
-                action = apply(repository, policy, run=run)["action"]
-                results.append((repository, action, check(repository, policy, run=run)))
+                result = reconcile(repository, run=run)
+                if result["action"] not in {"undeclared", "skipped"}:
+                    results.append((repository, result["action"], []))
             except PolicyError as error:
                 results.append((repository, "failed", [str(error)]))
     return results
@@ -282,12 +309,15 @@ def main(argv=None):
     commands.choices["apply"].add_argument("--dry-run", action="store_true")
     commands.choices["check"].add_argument("--branch")
     commands.add_parser("sync").add_argument("--owner", action="append", required=True)
-    commands.add_parser("reconcile").add_argument("--repo", required=True)
+    reconcile_command = commands.add_parser("reconcile")
+    reconcile_command.add_argument("--repo", required=True)
+    reconcile_command.add_argument("--check", action="store_true")
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "reconcile":
-            print(json.dumps(reconcile(arguments.repo)))
-            return 0
+            result = reconcile(arguments.repo, check_only=arguments.check)
+            print(json.dumps(result))
+            return 1 if result["action"] == "drift" else 0
         if arguments.command == "sync":
             results = sync(arguments.owner)
             for repository, action, problems in results:
