@@ -263,6 +263,8 @@ def reconcile(repository, run=subprocess.run, check_only=False):
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) == 1:
         actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
+        if not isinstance(actual.get("bypass_actors"), list):
+            raise PolicyError(f"{repository}: cannot verify bypass actors; ruleset write access is required")
         if matches_owned(actual, desired) and metadata.get("allow_auto_merge") is policy.get("enabled", True):
             return {"repository": repository, "action": "current", "revision": head}
     if check_only:

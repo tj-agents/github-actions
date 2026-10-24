@@ -91,3 +91,5 @@ python -B scripts/merge_policy.py sync --owner tj-agents --owner tomjseery
 
 After changing `enabled` to `false` in a reviewed policy, that same sync disables only this utility's
 owned ruleset and repository auto-merge. Repeating the command reports current without writes.
+
+Complete owned-policy verification requires ruleset write access because GitHub hides bypass actors from other identities. Missing bypass evidence fails verification; it is not reported as confirmed drift. Run that check through Tommy's separately controlled admin path.

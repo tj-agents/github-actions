@@ -260,6 +260,27 @@ class CheckTests(unittest.TestCase):
         self.assertEqual("current", merge_policy.reconcile("tj-agents/r", run=gh)["action"])
         self.assertFalse(any("--method" in command for command, _ in gh.calls))
 
+    def test_hidden_bypass_actors_are_unverifiable_instead_of_drift(self):
+        import base64
+        head = "a" * 40
+        desired = {**merge_policy.ruleset(HUMAN), "id": 7, "source_type": "Repository"}
+        hidden = {key: value for key, value in desired.items() if key != "bypass_actors"}
+        gh = FakeGh({
+            "repos/tj-agents/r": {"default_branch": "main", "allow_auto_merge": True},
+            "repos/tj-agents/r/commits/main": {"sha": head},
+            f"repos/tj-agents/r/contents/.github/merge-policy.json?ref={head}": {
+                "content": base64.b64encode(json.dumps(HUMAN).encode()).decode()},
+            "repos/tj-agents/r/rulesets?per_page=100": [desired],
+            "repos/tj-agents/r/rulesets/7": hidden,
+        })
+        for check_only in (False, True):
+            with self.subTest(check_only=check_only), self.assertRaisesRegex(
+                    merge_policy.PolicyError, "cannot verify bypass actors"):
+                merge_policy.reconcile("tj-agents/r", run=gh, check_only=check_only)
+        self.assertFalse(any("--method" in command for command, _ in gh.calls))
+        gh.responses["repos/tj-agents/r/rulesets/7"] = {**hidden, "bypass_actors": []}
+        self.assertEqual("drift", merge_policy.reconcile("tj-agents/r", run=gh, check_only=True)["action"])
+
     def test_disabled_policy_converges_without_touching_another_ruleset(self):
         policy = {**HUMAN, "enabled": False}
         active = {**merge_policy.ruleset(HUMAN), "id": 7, "source_type": "Repository"}
