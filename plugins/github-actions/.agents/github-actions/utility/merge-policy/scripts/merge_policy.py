@@ -80,9 +80,9 @@ def ruleset(policy):
         {"type": "non_fast_forward"},
         {"type": "pull_request", "parameters": {
             "required_approving_review_count": 1 if human_review else 0,
-            "dismiss_stale_reviews_on_push": True,
+            "dismiss_stale_reviews_on_push": False,
             "require_code_owner_review": False,
-            "require_last_push_approval": human_review,
+            "require_last_push_approval": False,
             "required_review_thread_resolution": False,
         }},
     ]
@@ -168,10 +168,10 @@ def drift(policy, rules):
     else:
         if approvals < 1:
             problems.append("no approval is required")
-        if reviews and not any(item.get("require_last_push_approval") for item in reviews):
-            problems.append("the most recent push does not need approval")
-        if reviews and not any(item.get("dismiss_stale_reviews_on_push") for item in reviews):
-            problems.append("a new push does not dismiss earlier approvals")
+    if reviews and any(item.get("require_last_push_approval") for item in reviews):
+        problems.append("approval of the most recent push is required")
+    if reviews and any(item.get("dismiss_stale_reviews_on_push") for item in reviews):
+        problems.append("a new push dismisses earlier approvals")
     enforced = {check.get("context") for item in by_type.get("required_status_checks", [])
                 for check in item.get("required_status_checks", [])}
     missing = [context for context in required_contexts(policy) if context not in enforced]

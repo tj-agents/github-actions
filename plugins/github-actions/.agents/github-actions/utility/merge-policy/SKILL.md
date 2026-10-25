@@ -25,8 +25,9 @@ A repository records who may merge in `.github/merge-policy.json`:
 }
 ```
 
-- `agents_may_merge: false`: every PR needs one approval of its most recent push. Agents push as the bot
-  account, so the approver is Tommy.
+- `agents_may_merge: false`: every PR needs one non-author approval. That approval remains valid after
+  later pushes to the same PR; required checks and source review still apply to the current head. Agents
+  push as the bot account, so the approver is Tommy.
 - `ci_pushes_default_branch: true`: deploy keys may push to the default branch, for a post-merge job
   that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
   actor, so that job pushes with a write deploy key whose private key is a secret of an environment
