@@ -50,11 +50,14 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(merge_policy.PolicyError):
                 merge_policy.load_policy(self.write(value))
 
-    def test_human_merge_requires_one_approval_of_the_latest_push(self):
+    def test_human_merge_retains_one_approval_across_pushes(self):
         ruleset = merge_policy.ruleset(HUMAN)
         review = next(rule for rule in ruleset["rules"] if rule["type"] == "pull_request")["parameters"]
+        checks = next(rule for rule in ruleset["rules"] if rule["type"] == "required_status_checks")
         self.assertEqual(1, review["required_approving_review_count"])
-        self.assertTrue(review["require_last_push_approval"])
+        self.assertFalse(review["dismiss_stale_reviews_on_push"])
+        self.assertFalse(review["require_last_push_approval"])
+        self.assertEqual([{"context": "ci-required"}], checks["parameters"]["required_status_checks"])
         self.assertEqual([{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
                          ruleset["bypass_actors"])
         self.assertEqual(["~DEFAULT_BRANCH"], ruleset["conditions"]["ref_name"]["include"])
@@ -143,12 +146,24 @@ class CheckTests(unittest.TestCase):
 
     def test_partial_rules_report_every_gap(self):
         problems = self.check(HUMAN, [{"type": "pull_request", "parameters": {}}])
-        self.assertEqual(6, len(problems))
+        self.assertEqual(4, len(problems))
         self.assertIn("required checks not enforced: ci-required", problems)
 
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
         self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
+
+    def test_policies_reject_rules_that_invalidate_earlier_approvals(self):
+        for policy in (HUMAN, AGENTS):
+            with self.subTest(policy=policy):
+                strict = rules(policy)
+                review = next(rule for rule in strict if rule["type"] == "pull_request")["parameters"]
+                review["dismiss_stale_reviews_on_push"] = True
+                review["require_last_push_approval"] = True
+                self.assertEqual(
+                    ["approval of the most recent push is required", "a new push dismisses earlier approvals"],
+                    self.check(policy, strict),
+                )
 
     def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
         import base64
