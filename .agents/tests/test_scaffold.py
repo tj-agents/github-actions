@@ -42,11 +42,11 @@ class RenderingTests(unittest.TestCase):
                     if not build:
                         config.pop("build")
                     files = scaffold.render(config)
-                    self.assertNotIn(".github/workflows/machine-events.yml", set(files))
+                    self.assertNotIn(".github/workflows/publish-update.yml", set(files))
                     self.assertNotIn(".github/merge-policy.json", set(files))
                     for content in files.values():
-                        self.assertNotIn("MACHINE_EVENTS_TOPIC", content)
-                        self.assertNotIn("tj-agents/github-actions/.github/actions/machine-events", content)
+                        self.assertNotIn("UPDATE_TOPIC", content)
+                        self.assertNotIn("tj-agents/github-actions/.github/actions/publish-update", content)
 
     def test_provider_status_functions_are_preserved_behind_lifecycle_authorization(self):
         config = fixture()

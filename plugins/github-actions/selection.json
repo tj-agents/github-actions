@@ -11,7 +11,7 @@
       "errors",
       "explanation",
       "libraries",
-      "machine-events",
+      "publish-update",
       "security",
       "structure",
       "style",
@@ -142,21 +142,6 @@
       ]
     },
     {
-      "name": "machine-events",
-      "kind": "utility",
-      "profile": "core",
-      "applicability": [
-        "tj-agents",
-        "Concertable and tomjseery repositories"
-      ],
-      "requires": [
-        "python"
-      ],
-      "provenance": [
-        "house"
-      ]
-    },
-    {
       "name": "merge-policy",
       "kind": "utility",
       "profile": "scaffold",
@@ -165,6 +150,20 @@
       ],
       "requires": [
         "github-actions"
+      ],
+      "provenance": [
+        "house"
+      ]
+    },
+    {
+      "name": "publish-update",
+      "kind": "utility",
+      "profile": "core",
+      "applicability": [
+        "GitHub repositories"
+      ],
+      "requires": [
+        "python"
       ],
       "provenance": [
         "house"

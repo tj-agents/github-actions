@@ -1,0 +1,47 @@
+name: Update shared action pins
+description: Update full commit SHA action references and open a pull request.
+inputs:
+  token:
+    description: Repository-scoped GitHub App installation token.
+    required: true
+  repositories:
+    description: Comma or newline separated action repositories to update.
+    required: true
+outputs:
+  changed:
+    description: Whether tracked action references changed.
+    value: ${{ steps.update.outputs.changed }}
+  summary:
+    description: Bounded update summary.
+    value: ${{ steps.update.outputs.summary }}
+runs:
+  using: composite
+  steps:
+    - name: Update action pins
+      id: update
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        UPDATE_REPOSITORIES: ${{ inputs.repositories }}
+      run: |
+        python=$(command -v python3 || command -v python)
+        "$python" -B "$GITHUB_ACTION_PATH/update_pins.py" --repositories "$UPDATE_REPOSITORIES"
+    - name: Create pull request
+      if: steps.update.outputs.changed == 'true'
+      uses: peter-evans/create-pull-request@bd09a93810788ce61d2d5fb7d6b221b9b4a4aab7
+      with:
+        token: ${{ inputs.token }}
+        branch: Chore/UpdateSharedPins
+        add-paths: |
+          .github/**/*.yml
+          .github/**/*.yaml
+        commit-message: 'chore: update shared action pins'
+        author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+        committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+        title: 'chore: update shared action pins'
+        body: |
+          ## Why
+          Keep shared GitHub Action pins current.
+
+          ## What
+          Update full commit SHA references in tracked GitHub workflow and action files.

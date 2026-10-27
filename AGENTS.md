@@ -12,7 +12,7 @@ Change them in Template, then run `template:update` to refresh them.
 before delivery.
 
 Before changing scaffolding, publisher enrollment or ruleset application, read the scopes owned by
-[machine-events](.agents/github-actions/utility/machine-events/SKILL.md) and
+[publish-update](.agents/github-actions/utility/publish-update/SKILL.md) and
 [merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md). Their personal scope is not a
 package-wide default. Preserve the boundary in the [scaffold fixtures](.agents/tests/test_scaffold.py)
 and [merge-policy fixtures](.agents/tests/test_merge_policy.py).
