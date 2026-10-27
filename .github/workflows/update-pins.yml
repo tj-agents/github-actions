@@ -37,7 +37,7 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
       - name: Update shared action pins
-        uses: tj-agents/github-actions/.github/actions/update-pins@5a6f33967ce83a07c7eb1b7f7b4fc1d71e771b02
+        uses: tj-agents/github-actions/.github/actions/update-pins@52119695f7901290dfd4a824f4563408e5764788
         with:
           token: ${{ steps.app-token.outputs.token }}
           repositories: ${{ inputs.repositories || 'tj-agents/github-actions' }}
