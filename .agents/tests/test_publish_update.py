@@ -10,6 +10,8 @@ from test_merge_policy import FakeGh, HUMAN, merge_policy, rules
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
 PUBLISH = ROOT / ".github/actions/publish-update/publish.py"
+PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
+UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
 
 
 def load(name, path):
@@ -76,6 +78,20 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn("secrets.GH_TOKEN", value)
         with self.assertRaises(ValueError):
             caller.render("main")
+
+    def test_default_branch_conditions_precede_checkout_and_secrets(self):
+        default_ref = "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+        publisher = caller.render("a" * 40)
+        updater = caller.render_updater("a" * 40, "neutral/actions")
+        for workflow, variable in ((PUBLISH_WORKFLOW.read_text(encoding="utf-8"), "UPDATE_TOPIC"),
+                                   (UPDATER_WORKFLOW.read_text(encoding="utf-8"), "UPDATE_APP_CLIENT_ID"),
+                                   (publisher, "UPDATE_TOPIC"),
+                                   (updater, "UPDATE_APP_CLIENT_ID")):
+            condition = "if: vars." + variable + " != '' && " + default_ref
+            self.assertIn(condition, workflow)
+            self.assertLess(workflow.index(condition), workflow.index("uses: actions/checkout") if "uses: actions/checkout" in workflow else workflow.index("topic: ${{ secrets.UPDATE_TOPIC }}"))
+            if "private-key:" in workflow:
+                self.assertLess(workflow.index(condition), workflow.index("private-key:"))
 
 
 class ReconcileTests(unittest.TestCase):

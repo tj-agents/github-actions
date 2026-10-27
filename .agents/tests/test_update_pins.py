@@ -62,6 +62,33 @@ uses: Neutral/Actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         updater.update(self.project, ["neutral/actions"], files=[".github/workflows/case.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value))
         self.assertEqual([("neutral/actions", "a" * 40, "c" * 40)], comparisons)
 
+    def test_skips_literal_folded_and_multiline_quoted_scalars(self):
+        path = self.write("scalars.yml", """steps:
+# example: |
+  - uses: neutral/actions@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  - run: |-
+      cat <<'EOF'
+      uses: neutral/actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      EOF
+  - 'run': >+
+      uses: neutral/actions@dddddddddddddddddddddddddddddddddddddddd
+  - name: "literal
+      uses: neutral/actions@eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+      value"
+  - name: |
+      display name
+    uses: 'neutral/actions@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+""")
+        comparisons = []
+        updater.update(self.project, ["neutral/actions"], files=[".github/workflows/scalars.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value))
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("neutral/actions@" + "a" * 40, content)
+        self.assertIn("neutral/actions@" + "d" * 40, content)
+        self.assertIn("neutral/actions@" + "e" * 40, content)
+        self.assertIn("- uses: neutral/actions@" + "c" * 40, content)
+        self.assertIn("'neutral/actions@" + "c" * 40 + "'", content)
+        self.assertEqual([("neutral/actions", "b" * 40, "c" * 40)], comparisons)
+
     def test_non_matching_refs_leave_files_unchanged(self):
         path = self.write("ci.yaml", "uses: neutral/actions@v2\n")
         before = path.read_text(encoding="utf-8")
