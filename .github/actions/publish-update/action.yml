@@ -1,0 +1,21 @@
+name: Publish update
+description: Publish a repository change hint to a configured update topic.
+inputs:
+  topic:
+    description: Private update topic.
+    required: true
+  published:
+    description: Set true after pushing generated marketplace packages with GITHUB_TOKEN.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Publish update
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        UPDATE_TOPIC: ${{ inputs.topic }}
+        UPDATE_PUBLISHED: ${{ inputs.published }}
+      run: |
+        python=$(command -v python3 || command -v python)
+        "$python" -B "$GITHUB_ACTION_PATH/publish.py"

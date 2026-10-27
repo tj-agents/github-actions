@@ -12,6 +12,6 @@
 - `direction` — knowledge — knowledge
 - `knowledge` — knowledge — knowledge
 - `learning` — knowledge — knowledge
-- `machine-events` — utility — core
 - `merge-policy` — utility — scaffold
+- `publish-update` — utility — core
 - `scaffold` — utility — scaffold
