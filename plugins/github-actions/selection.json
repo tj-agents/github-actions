@@ -2,8 +2,7 @@
   "plugin": "github-actions",
   "dependencies": [
     "tj-agents/base",
-    "tj-agents/engineering",
-    "tj-agents/machine"
+    "tj-agents/engineering"
   ],
   "profiles": {
     "core": [
