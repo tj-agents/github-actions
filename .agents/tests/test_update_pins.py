@@ -66,13 +66,13 @@ uses: Neutral/Actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         path = self.write("scalars.yml", """steps:
 # example: |
   - uses: neutral/actions@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-  - run: |-
+  - run: &heredoc.script !<tag:yaml.org,2002:str> |-
       cat <<'EOF'
       uses: neutral/actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       EOF
-  - 'run': >+
+  - 'run': ! &folded.script >+
       uses: neutral/actions@dddddddddddddddddddddddddddddddddddddddd
-  - name: "literal
+  - name: !text &quoted "literal
       uses: neutral/actions@eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
       value"
   - name: |
