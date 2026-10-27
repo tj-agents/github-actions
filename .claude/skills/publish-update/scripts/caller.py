@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: vars.UPDATE_TOPIC != ''
+    if: vars.UPDATE_TOPIC != '' && github.ref == format('refs/heads/{{0}}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -55,7 +55,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   update:
-    if: vars.UPDATE_APP_CLIENT_ID != ''
+    if: vars.UPDATE_APP_CLIENT_ID != '' && github.ref == format('refs/heads/{{0}}', github.event.repository.default_branch)
     environment: update-pins
     runs-on: ubuntu-latest
     timeout-minutes: 10

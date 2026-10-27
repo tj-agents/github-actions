@@ -9,7 +9,9 @@ from urllib.parse import quote
 
 REPOSITORY = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_.-]{1,100}")
 SHA = re.compile(r"[0-9a-f]{40}")
-USES = re.compile(r"(?m)^(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]*)(?P<quote>['\"]?)(?P<repository>[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+)(?P<subpath>/[A-Za-z0-9._/-]+)?@(?P<sha>[0-9a-fA-F]{40})(?P=quote)(?P<suffix>[ \t]*(?:#.*)?)(?P<ending>\r?)$")
+USES = re.compile(r"(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]*)(?P<quote>['\"]?)(?P<repository>[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+)(?P<subpath>/[A-Za-z0-9._/-]+)?@(?P<sha>[0-9a-fA-F]{40})(?P=quote)(?P<suffix>[ \t]*(?:#.*)?)(?P<ending>\r?)")
+SCALAR = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*[>|](?:[+-]?\d?|\d?[+-]?)[ \t]*(?:#.*)?\r?$")
+QUOTED = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*(?P<quote>['\"])(?P<value>.*)\r?$")
 
 
 def parse_repositories(value):
@@ -79,18 +81,84 @@ def read_file(root, relative):
         return target, handle.read()
 
 
+def closes_quote(value, quote):
+    if quote == "'":
+        index = 0
+        while index < len(value):
+            if value[index] == "'":
+                if index + 1 < len(value) and value[index + 1] == "'":
+                    index += 2
+                    continue
+                return True
+            index += 1
+        return False
+    escaped = False
+    for character in value:
+        if character == '"' and not escaped:
+            return True
+        escaped = character == "\\" and not escaped
+        if character != "\\":
+            escaped = False
+    return False
+
+
+def reference_matches(content):
+    position = 0
+    scalar_indent = None
+    quote = None
+    for line in content.splitlines(keepends=True):
+        text = line[:-1] if line.endswith("\n") else line
+        indent = len(text) - len(text.lstrip(" \t"))
+        if scalar_indent is not None:
+            if text.strip(" \t\r") and indent <= scalar_indent:
+                scalar_indent = None
+            else:
+                position += len(line)
+                continue
+        if quote is not None:
+            if closes_quote(text, quote):
+                quote = None
+            position += len(line)
+            continue
+        if text.lstrip(" \t").startswith("#"):
+            position += len(line)
+            continue
+        if SCALAR.fullmatch(text):
+            sequence = re.match(r"^[ \t]*-[ \t]+", text)
+            scalar_indent = len(sequence.group(0)) if sequence is not None else indent
+            position += len(line)
+            continue
+        quoted = QUOTED.fullmatch(text)
+        if quoted is not None and not closes_quote(quoted.group("value"), quoted.group("quote")):
+            quote = quoted.group("quote")
+            position += len(line)
+            continue
+        match = USES.fullmatch(text)
+        if match is not None:
+            yield position, position + len(text), match
+        position += len(line)
+
+
+def replacement(match, revisions):
+    revision = revisions.get(match.group("repository").lower())
+    if revision is None or revision == match.group("sha").lower():
+        return match.group(0)
+    return "".join((match.group("prefix"), match.group("quote"), match.group("repository"), match.group("subpath") or "", "@", revision, match.group("quote"), match.group("suffix"), match.group("ending")))
+
+
 def replace_references(content, revisions):
-    def replace(match):
-        revision = revisions.get(match.group("repository").lower())
-        if revision is None or revision == match.group("sha").lower():
-            return match.group(0)
-        return "".join((match.group("prefix"), match.group("quote"), match.group("repository"), match.group("subpath") or "", "@", revision, match.group("quote"), match.group("suffix"), match.group("ending")))
-    return USES.sub(replace, content)
+    output = []
+    position = 0
+    for start, end, match in reference_matches(content):
+        output.extend((content[position:start], replacement(match, revisions)))
+        position = end
+    output.append(content[position:])
+    return "".join(output)
 
 
 def pending_comparisons(content, revisions):
     comparisons = set()
-    for match in USES.finditer(content):
+    for _, _, match in reference_matches(content):
         candidate = revisions.get(match.group("repository").lower())
         before = match.group("sha").lower()
         if candidate and candidate != before:
