@@ -1,0 +1,22 @@
+name: Publish update
+on:
+  push:
+permissions:
+  contents: read
+concurrency:
+  group: publish-update-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: vars.UPDATE_TOPIC != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publish repository update
+        uses: ./.github/actions/publish-update
+        with:
+          topic: ${{ secrets.UPDATE_TOPIC }}

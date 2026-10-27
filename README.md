@@ -17,17 +17,29 @@ Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
   Tommy's personal `.github/merge-policy.json` as the repository's GitHub ruleset; its composite action
   `.github/actions/merge-policy-check` reports drift in CI.
 
-- Utility: [github-actions:machine-events](.agents/github-actions/utility/machine-events/SKILL.md)
-  prepares explicitly adopted publishers for the personal machine channel. Core owns the listener and
-  [refresh lifecycle](https://github.com/tj-agents/core#machine-setup-and-updates).
+- Utility: [github-actions:publish-update](.agents/github-actions/utility/publish-update/SKILL.md)
+  prepares explicitly adopted repository-update publishers. Consumers retain separate authority for
+  every action they take after receiving a hint.
 
 ## Personal automation and employer projects
 
 Selecting this package makes its utilities available; it does not invoke them or adopt their personal
-configuration. The generic scaffold generates CI and deployment files without a personal publisher or
+configuration. The generic scaffold generates CI and deployment files without a publisher or
 merge-policy declaration. Publisher enrollment and personal ruleset application follow their linked
-utility scopes and owner checks. For example, scaffolding an employer service produces no
-`machine-events.yml` or `.github/merge-policy.json`.
+utility scopes. For example, scaffolding a service produces no `publish-update.yml` or
+`.github/merge-policy.json`.
+
+Publisher topics and secrets remain private repository configuration. The public publisher workflow sends
+repository and change-category hints only; it does not grant consumer authority or auto-merge changes.
+Possession of an ntfy topic is not authentication or authority.
+
+The public `publish-update` and `update-pins` automation and skills are colocated here. Private consumer
+implementations remain in a separate private repository. Store App credentials in the protected
+`update-pins` environment, restrict that environment to the default branch, set
+`UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
+Install the App only in selected repositories. The pin updater changes full-SHA `uses:` references only;
+Core CI computes export and digest hashes. Credential enrollment and a live pull-request run remain
+unverified until a repository is configured.
 
 Local agent adoption belongs to
 [machine:plugin-selection](https://github.com/tj-agents/core/blob/main/.agents/machine/utility/plugin-selection/SKILL.md),
@@ -39,7 +51,7 @@ already selected plugin updates its installed code; it does not change the proje
 ```text
 python -B -m unittest discover -s .agents/tests -p test_scaffold.py
 python -B -m unittest discover -s .agents/tests -p test_merge_policy.py
-python -B -m unittest discover -s .agents/tests -p test_machine_events.py
+python -B -m unittest discover -s .agents/tests -p test_publish_update.py
 python -B .agents/tests/verify_workflows.py
 python -B .agents/sync_generated.py --root .
 python -B .agents/sync_generated.py --root . --check
