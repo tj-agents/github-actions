@@ -44,8 +44,9 @@ with `published: 'true'`, because that push does not trigger another workflow.
 Possession of the ntfy topic is not authentication or consumer authority. The receiver decides whether to
 act, and this public workflow never merges code.
 
-The colocated `update-pins` action updates full-SHA `uses:` references in tracked `.github` YAML and opens
-a pull request with a repository-scoped App token. The canonical workflow owns its `update-pins`
+The colocated `update-pins` action updates full-SHA `uses:` references in tracked `.github` YAML only when
+the referenced action or workflow content changes, then opens a pull request with a repository-scoped App
+token. The canonical workflow owns its `update-pins`
 environment, which holds the private App credential and restricts it to the default branch. Configure
 `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
 Install the App only in selected repositories; generated trigger workflows explicitly map the private-key

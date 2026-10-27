@@ -38,8 +38,9 @@ workflows own the guarded jobs; generated consumer workflow copies are thin trig
 explicitly mapped secrets. Private consumer implementations remain in a separate private repository.
 Store App credentials in the protected `update-pins` environment, restrict that environment to the default
 branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
-secret. Install the App only in selected repositories. The pin updater changes full-SHA `uses:` references
-only; Core CI computes export and digest hashes. Credential enrollment and a live pull-request run remain
+secret. Install the App only in selected repositories. The pin updater changes a full-SHA `uses:` reference
+only when its action or workflow content differs at a forward default-branch revision; Core CI computes export
+and digest hashes. Credential enrollment and a live pull-request run remain
 unverified until a repository is configured.
 
 Local agent adoption belongs to

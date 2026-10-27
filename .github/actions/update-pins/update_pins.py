@@ -13,6 +13,7 @@ USES = re.compile(r"(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]*)(?P<quote>['\"]?)(?
 PROPERTIES = r"(?:[&!][^ \t\r\n]*[ \t]+)*"
 SCALAR = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*" + PROPERTIES + r"[ \t]*[>|](?:[+-]?\d?|\d?[+-]?)[ \t]*(?:#.*)?\r?$")
 QUOTED = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*" + PROPERTIES + r"[ \t]*(?P<quote>['\"])(?P<value>.*)\r?$")
+CONTENT_QUERY = "query($owner:String!,$name:String!,$before:String!,$after:String!){repository(owner:$owner,name:$name){before:object(expression:$before){oid __typename} after:object(expression:$after){oid __typename}}}"
 
 
 def parse_repositories(value):
@@ -54,6 +55,39 @@ def compare_revisions(repository, before, after, run=command):
         raise ValueError("repository comparison failed") from None
     if status not in {"ahead", "identical"}:
         raise ValueError("non-forward repository update")
+
+
+def compare_contents(repository, subpath, before, after, run=command):
+    try:
+        owner, name = repository.split("/", 1)
+        path = subpath.removeprefix("/")
+        if not REPOSITORY.fullmatch(repository) or not SHA.fullmatch(before) or not SHA.fullmatch(after):
+            raise ValueError
+        result = run([
+            "gh", "api", "graphql",
+            "-f", "query=" + CONTENT_QUERY,
+            "-f", "owner=" + owner,
+            "-f", "name=" + name,
+            "-f", "before=" + before + ":" + path,
+            "-f", "after=" + after + ":" + path,
+        ])
+        response = json.loads(result.stdout)
+        if response.get("errors"):
+            raise ValueError
+        objects = response["data"]["repository"]
+        old = objects["before"]
+        new = objects["after"]
+        if (
+            old is None or new is None
+            or old.get("__typename") not in {"Tree", "Blob"}
+            or new.get("__typename") not in {"Tree", "Blob"}
+            or not isinstance(old.get("oid"), str) or not SHA.fullmatch(old["oid"])
+            or not isinstance(new.get("oid"), str) or not SHA.fullmatch(new["oid"])
+        ):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise ValueError("content comparison failed") from None
+    return old["oid"] != new["oid"]
 
 
 def tracked_files(project, run=command):
@@ -141,8 +175,8 @@ def reference_matches(content):
 
 
 def replacement(match, revisions):
-    revision = revisions.get(match.group("repository").lower())
-    if revision is None or revision == match.group("sha").lower():
+    revision = revisions.get((match.group("repository").lower(), match.group("subpath") or "", match.group("sha").lower()))
+    if revision is None:
         return match.group(0)
     return "".join((match.group("prefix"), match.group("quote"), match.group("repository"), match.group("subpath") or "", "@", revision, match.group("quote"), match.group("suffix"), match.group("ending")))
 
@@ -163,22 +197,26 @@ def pending_comparisons(content, revisions):
         candidate = revisions.get(match.group("repository").lower())
         before = match.group("sha").lower()
         if candidate and candidate != before:
-            comparisons.add((match.group("repository").lower(), before, candidate))
+            comparisons.add((match.group("repository").lower(), match.group("subpath") or "", before, candidate))
     return comparisons
 
 
-def update(project, repositories, check=False, files=None, resolver=resolve_repository, comparer=compare_revisions):
+def update(project, repositories, check=False, files=None, resolver=resolve_repository, comparer=compare_revisions, content_comparer=compare_contents):
     root = Path(project).resolve()
     if not root.is_dir():
         raise ValueError("project is not a directory")
     documents = [read_file(root, relative) for relative in (tracked_files(root) if files is None else files)]
     revisions = {repository.lower(): resolver(repository) for repository in repositories}
-    proposals = [(path, content, replace_references(content, revisions)) for path, content in documents]
     comparisons = set()
-    for _, original, _ in proposals:
-        comparisons.update(pending_comparisons(original, revisions))
-    for repository, before, after in sorted(comparisons):
+    for _, content in documents:
+        comparisons.update(pending_comparisons(content, revisions))
+    for repository, before, after in sorted({(repository, before, after) for repository, _, before, after in comparisons}):
         comparer(repository, before, after)
+    replacements = {}
+    for repository, subpath, before, after in sorted(comparisons):
+        if content_comparer(repository, subpath, before, after):
+            replacements[(repository, subpath, before)] = after
+    proposals = [(path, content, replace_references(content, replacements)) for path, content in documents]
     changed = [(path, updated) for path, original, updated in proposals if updated != original]
     if changed and not check:
         for path, content in changed:
