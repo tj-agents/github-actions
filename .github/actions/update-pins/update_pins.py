@@ -10,8 +10,9 @@ from urllib.parse import quote
 REPOSITORY = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_.-]{1,100}")
 SHA = re.compile(r"[0-9a-f]{40}")
 USES = re.compile(r"(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]*)(?P<quote>['\"]?)(?P<repository>[A-Za-z0-9][A-Za-z0-9.-]*/[A-Za-z0-9_.-]+)(?P<subpath>/[A-Za-z0-9._/-]+)?@(?P<sha>[0-9a-fA-F]{40})(?P=quote)(?P<suffix>[ \t]*(?:#.*)?)(?P<ending>\r?)")
-SCALAR = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*[>|](?:[+-]?\d?|\d?[+-]?)[ \t]*(?:#.*)?\r?$")
-QUOTED = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*(?P<quote>['\"])(?P<value>.*)\r?$")
+PROPERTIES = r"(?:[&!][^ \t\r\n]*[ \t]+)*"
+SCALAR = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*" + PROPERTIES + r"[ \t]*[>|](?:[+-]?\d?|\d?[+-]?)[ \t]*(?:#.*)?\r?$")
+QUOTED = re.compile(r"^[ \t]*(?:-[ \t]+)?[^:\r\n]+:[ \t]*" + PROPERTIES + r"[ \t]*(?P<quote>['\"])(?P<value>.*)\r?$")
 
 
 def parse_repositories(value):
