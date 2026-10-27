@@ -14,8 +14,7 @@
     "plugins": [
       "tj-agents/github-actions",
       "tj-agents/base",
-      "tj-agents/engineering",
-      "tj-agents/machine"
+      "tj-agents/engineering"
     ],
     "hooks": [],
     "permissions": {
