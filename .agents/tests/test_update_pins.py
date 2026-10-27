@@ -163,20 +163,18 @@ uses: neutral/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 
 class CallerTests(unittest.TestCase):
-    def test_updater_caller_uses_repository_scoped_app_permissions(self):
+    def test_updater_caller_uses_the_canonical_workflow(self):
         workflow = caller.render_updater("a" * 40, "neutral/actions,Neutral/Actions,neutral/other")
         self.assertIn("cron: '17 */6 * * *'", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("environment: update-pins", workflow)
-        self.assertIn("client-id: ${{ vars.UPDATE_APP_CLIENT_ID }}", workflow)
-        self.assertIn("private-key: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}", workflow)
-        self.assertIn("permission-contents: write", workflow)
-        self.assertIn("permission-pull-requests: write", workflow)
-        self.assertIn("permission-workflows: write", workflow)
+        self.assertIn("uses: tj-agents/github-actions/.github/workflows/update-pins.yml@" + "a" * 40, workflow)
+        self.assertIn("UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}", workflow)
         self.assertIn("repositories: neutral/actions,neutral/other", workflow)
-        token_step = workflow.split("      - name: Update shared action pins", 1)[0]
-        self.assertNotIn("owner:", token_step)
-        self.assertNotIn("repositories:", token_step)
+        self.assertNotIn("environment:", workflow)
+        self.assertNotIn("runs-on:", workflow)
+        self.assertNotIn("steps:", workflow)
+        self.assertNotIn("client-id:", workflow)
+        self.assertNotIn("permission-contents:", workflow)
 
 
 if __name__ == "__main__":

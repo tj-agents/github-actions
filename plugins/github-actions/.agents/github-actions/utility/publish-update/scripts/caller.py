@@ -11,19 +11,11 @@ on:
   push:
 permissions:
   contents: read
-concurrency:
-  group: publish-update-${{{{ github.ref }}}}
-  cancel-in-progress: false
 jobs:
   publish:
-    if: vars.UPDATE_TOPIC != '' && github.ref == format('refs/heads/{{0}}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Publish repository hint
-        uses: tj-agents/github-actions/.github/actions/publish-update@{revision}
-        with:
-          topic: ${{{{ secrets.UPDATE_TOPIC }}}}
+    uses: tj-agents/github-actions/.github/workflows/publish-update.yml@{revision}
+    secrets:
+      UPDATE_TOPIC: ${{{{ secrets.UPDATE_TOPIC }}}}
 """
 
 
@@ -50,34 +42,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: update-pins
-  cancel-in-progress: false
 jobs:
   update:
-    if: vars.UPDATE_APP_CLIENT_ID != '' && github.ref == format('refs/heads/{{0}}', github.event.repository.default_branch)
-    environment: update-pins
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Mint repository token
-        id: app-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
-        with:
-          client-id: ${{{{ vars.UPDATE_APP_CLIENT_ID }}}}
-          private-key: ${{{{ secrets.UPDATE_APP_PRIVATE_KEY }}}}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-      - name: Update shared action pins
-        uses: tj-agents/github-actions/.github/actions/update-pins@{revision}
-        with:
-          token: ${{{{ steps.app-token.outputs.token }}}}
-          repositories: {','.join(values)}
+    uses: tj-agents/github-actions/.github/workflows/update-pins.yml@{revision}
+    with:
+      repositories: {','.join(values)}
+    secrets:
+      UPDATE_APP_PRIVATE_KEY: ${{{{ secrets.UPDATE_APP_PRIVATE_KEY }}}}
 """
 
 

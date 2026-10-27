@@ -33,12 +33,13 @@ Publisher topics and secrets remain private repository configuration. The public
 repository and change-category hints only; it does not grant consumer authority or auto-merge changes.
 Possession of an ntfy topic is not authentication or authority.
 
-The public `publish-update` and `update-pins` automation and skills are colocated here. Private consumer
-implementations remain in a separate private repository. Store App credentials in the protected
-`update-pins` environment, restrict that environment to the default branch, set
-`UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
-Install the App only in selected repositories. The pin updater changes full-SHA `uses:` references only;
-Core CI computes export and digest hashes. Credential enrollment and a live pull-request run remain
+The public `publish-update` and `update-pins` automation and skills are colocated here. Their canonical
+workflows own the guarded jobs; generated consumer workflow copies are thin triggers that call them with
+explicitly mapped secrets. Private consumer implementations remain in a separate private repository.
+Store App credentials in the protected `update-pins` environment, restrict that environment to the default
+branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
+secret. Install the App only in selected repositories. The pin updater changes full-SHA `uses:` references
+only; Core CI computes export and digest hashes. Credential enrollment and a live pull-request run remain
 unverified until a repository is configured.
 
 Local agent adoption belongs to

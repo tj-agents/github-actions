@@ -1,6 +1,10 @@
 name: Publish update
 on:
   push:
+  workflow_call:
+    secrets:
+      UPDATE_TOPIC:
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -12,11 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
       - name: Publish repository update
-        uses: ./.github/actions/publish-update
+        uses: tj-agents/github-actions/.github/actions/publish-update@5a6f33967ce83a07c7eb1b7f7b4fc1d71e771b02
         with:
           topic: ${{ secrets.UPDATE_TOPIC }}

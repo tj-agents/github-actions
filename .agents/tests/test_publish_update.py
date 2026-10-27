@@ -68,30 +68,42 @@ class PublisherTests(unittest.TestCase):
         paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
         self.assertIn("marketplace", publish.hint(event, "tj-agents/core", paths)["changes"])
 
-    def test_uniform_caller_has_read_only_permissions_and_immutable_action(self):
+    def test_uniform_caller_has_read_only_permissions_and_immutable_workflow(self):
         value = caller.render("a" * 40)
-        self.assertIn("@" + "a" * 40, value)
+        self.assertIn("uses: tj-agents/github-actions/.github/workflows/publish-update.yml@" + "a" * 40, value)
         self.assertIn("contents: read", value)
         self.assertNotIn("schedule:", value)
-        self.assertIn("topic: ${{ secrets.UPDATE_TOPIC }}", value)
+        self.assertIn("UPDATE_TOPIC: ${{ secrets.UPDATE_TOPIC }}", value)
         self.assertNotIn("branches:", value)
         self.assertNotIn("secrets.GH_TOKEN", value)
+        self.assertNotIn("runs-on:", value)
+        self.assertNotIn("steps:", value)
+        self.assertNotIn("concurrency:", value)
         with self.assertRaises(ValueError):
             caller.render("main")
 
-    def test_default_branch_conditions_precede_checkout_and_secrets(self):
+    def test_canonical_workflows_own_default_branch_guards_and_secret_contracts(self):
         default_ref = "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
-        publisher = caller.render("a" * 40)
-        updater = caller.render_updater("a" * 40, "neutral/actions")
-        for workflow, variable in ((PUBLISH_WORKFLOW.read_text(encoding="utf-8"), "UPDATE_TOPIC"),
-                                   (UPDATER_WORKFLOW.read_text(encoding="utf-8"), "UPDATE_APP_CLIENT_ID"),
-                                   (publisher, "UPDATE_TOPIC"),
-                                   (updater, "UPDATE_APP_CLIENT_ID")):
-            condition = "if: vars." + variable + " != '' && " + default_ref
-            self.assertIn(condition, workflow)
-            self.assertLess(workflow.index(condition), workflow.index("uses: actions/checkout") if "uses: actions/checkout" in workflow else workflow.index("topic: ${{ secrets.UPDATE_TOPIC }}"))
-            if "private-key:" in workflow:
-                self.assertLess(workflow.index(condition), workflow.index("private-key:"))
+        publisher = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("workflow_call:\n    secrets:\n      UPDATE_TOPIC:\n        required: false", publisher)
+        self.assertIn("if: vars.UPDATE_TOPIC != '' && " + default_ref, publisher)
+        self.assertRegex(publisher, r"uses: tj-agents/github-actions/\.github/actions/publish-update@[0-9a-f]{40}")
+        self.assertNotIn("actions/checkout", publisher)
+        self.assertIn("workflow_call:\n    inputs:\n      repositories:\n        required: true\n        type: string", updater)
+        self.assertIn("UPDATE_APP_PRIVATE_KEY:\n        required: true", updater)
+        self.assertIn("if: vars.UPDATE_APP_CLIENT_ID != '' && " + default_ref, updater)
+        self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("uses: actions/checkout"))
+        self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("private-key:"))
+        self.assertIn("environment: update-pins", updater)
+        self.assertIn("repositories: ${{ inputs.repositories || 'tj-agents/github-actions' }}", updater)
+        self.assertRegex(updater, r"uses: tj-agents/github-actions/\.github/actions/update-pins@[0-9a-f]{40}")
+        token_step = updater.split("      - name: Mint repository token\n", 1)[1].split("      - name: Update shared action pins", 1)[0]
+        self.assertIn("permission-contents: write", token_step)
+        self.assertIn("permission-pull-requests: write", token_step)
+        self.assertIn("permission-workflows: write", token_step)
+        self.assertNotIn("owner:", token_step)
+        self.assertNotIn("repositories:", token_step)
 
 
 class ReconcileTests(unittest.TestCase):
