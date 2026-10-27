@@ -42,7 +42,7 @@ class UpdatePinsTests(unittest.TestCase):
   - uses: other/tool@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   - uses: ./local-action
 """)
-        summary = updater.update(self.project, ["neutral/actions"], files=[".github/workflows/ci.yml"], resolver=lambda _: "c" * 40, comparer=lambda *_: None)
+        summary = updater.update(self.project, ["neutral/actions"], files=[".github/workflows/ci.yml"], resolver=lambda _: "c" * 40, comparer=lambda *_: None, content_comparer=lambda *_: True)
         content = path.read_text(encoding="utf-8")
         self.assertEqual({"changed": True, "files": 1, "repositories": ["neutral/actions"]}, summary)
         self.assertIn("'neutral/actions/.github/actions/check@" + "c" * 40 + "'", content)
@@ -51,7 +51,7 @@ class UpdatePinsTests(unittest.TestCase):
 
     def test_matches_repository_case_insensitively_and_preserves_crlf(self):
         path = self.write("windows.yml", "- uses: \"neutral/actions@" + "a" * 40 + "\"\r\n")
-        updater.update(self.project, updater.parse_repositories("Neutral/Actions,neutral/actions"), files=[".github/workflows/windows.yml"], resolver=lambda _: "c" * 40, comparer=lambda *_: None)
+        updater.update(self.project, updater.parse_repositories("Neutral/Actions,neutral/actions"), files=[".github/workflows/windows.yml"], resolver=lambda _: "c" * 40, comparer=lambda *_: None, content_comparer=lambda *_: True)
         self.assertEqual("- uses: \"neutral/actions@" + "c" * 40 + "\"\r\n", path.read_bytes().decode("utf-8"))
 
     def test_case_insensitive_references_share_one_comparison(self):
@@ -59,8 +59,125 @@ class UpdatePinsTests(unittest.TestCase):
 uses: Neutral/Actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 """)
         comparisons = []
-        updater.update(self.project, ["neutral/actions"], files=[".github/workflows/case.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value))
+        content_comparisons = []
+        updater.update(self.project, ["neutral/actions"], files=[".github/workflows/case.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value), content_comparer=lambda *value: content_comparisons.append(value) or True)
         self.assertEqual([("neutral/actions", "a" * 40, "c" * 40)], comparisons)
+        self.assertEqual([("neutral/actions", "", "a" * 40, "c" * 40)], content_comparisons)
+
+    def test_unchanged_action_content_across_head_advances_leaves_files_unmodified(self):
+        path = self.write("self.yml", "uses: tj-agents/github-actions/.github/actions/update-pins@" + "a" * 40 + "\n")
+        before = path.read_text(encoding="utf-8")
+        calls = []
+        for revision in ("b" * 40, "c" * 40):
+            summary = updater.update(
+                self.project,
+                ["tj-agents/github-actions"],
+                files=[".github/workflows/self.yml"],
+                resolver=lambda _, revision=revision: revision,
+                comparer=lambda *_: None,
+                content_comparer=lambda *value: calls.append(value) or False,
+            )
+            self.assertFalse(summary["changed"])
+            self.assertEqual(before, path.read_text(encoding="utf-8"))
+        self.assertEqual([
+            ("tj-agents/github-actions", "/.github/actions/update-pins", "a" * 40, "b" * 40),
+            ("tj-agents/github-actions", "/.github/actions/update-pins", "a" * 40, "c" * 40),
+        ], calls)
+
+    def test_updates_changed_action_and_workflow_content(self):
+        path = self.write("references.yml", """uses: neutral/actions/.github/actions/check@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+uses: neutral/actions/.github/workflows/release.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+""")
+        comparisons = []
+        updater.update(
+            self.project,
+            ["neutral/actions"],
+            files=[".github/workflows/references.yml"],
+            resolver=lambda _: "c" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *value: comparisons.append(value) or True,
+        )
+        content = path.read_text(encoding="utf-8")
+        self.assertEqual([
+            ("neutral/actions", "/.github/actions/check", "a" * 40, "c" * 40),
+            ("neutral/actions", "/.github/workflows/release.yml", "b" * 40, "c" * 40),
+        ], comparisons)
+        self.assertEqual(2, content.count("@" + "c" * 40))
+
+    def test_mixed_content_changes_replace_only_changed_reference(self):
+        path = self.write("mixed.yml", """uses: neutral/actions/.github/actions/changed@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+uses: neutral/actions/.github/actions/unchanged@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+""")
+        updater.update(
+            self.project,
+            ["neutral/actions"],
+            files=[".github/workflows/mixed.yml"],
+            resolver=lambda _: "c" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda repository, subpath, *rest: subpath == "/.github/actions/changed",
+        )
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("/.github/actions/changed@" + "c" * 40, content)
+        self.assertIn("/.github/actions/unchanged@" + "a" * 40, content)
+
+    def test_failed_second_content_lookup_is_atomic(self):
+        path = self.write("content.yml", """uses: neutral/actions/.github/actions/first@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+uses: neutral/actions/.github/actions/second@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+""")
+        before = path.read_text(encoding="utf-8")
+        calls = []
+        def compare_content(repository, subpath, old, new):
+            calls.append((repository, subpath, old, new))
+            if subpath == "/.github/actions/second":
+                raise ValueError("content comparison failed")
+            return True
+        with self.assertRaisesRegex(ValueError, "^content comparison failed$"):
+            updater.update(
+                self.project,
+                ["neutral/actions"],
+                files=[".github/workflows/content.yml"],
+                resolver=lambda _: "c" * 40,
+                comparer=lambda *_: None,
+                content_comparer=compare_content,
+            )
+        self.assertEqual([
+            ("neutral/actions", "/.github/actions/first", "a" * 40, "c" * 40),
+            ("neutral/actions", "/.github/actions/second", "a" * 40, "c" * 40),
+        ], calls)
+        self.assertEqual(before, path.read_text(encoding="utf-8"))
+
+    def test_content_comparison_uses_object_ids(self):
+        calls = []
+        def run(arguments):
+            calls.append(arguments)
+            return mock.Mock(stdout="""{"data":{"repository":{"before":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Tree"},"after":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","__typename":"Tree"}}}}""")
+        self.assertTrue(updater.compare_contents("neutral/actions", "/.github/actions/check", "c" * 40, "d" * 40, run))
+        root_calls = []
+        self.assertFalse(updater.compare_contents("neutral/actions", "", "e" * 40, "f" * 40, lambda arguments: root_calls.append(arguments) or mock.Mock(stdout="""{"data":{"repository":{"before":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Tree"},"after":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Tree"}}}}""")))
+        self.assertEqual([
+            "gh", "api", "graphql",
+            "-f", "query=" + updater.CONTENT_QUERY,
+            "-f", "owner=neutral",
+            "-f", "name=actions",
+            "-f", "before=" + "c" * 40 + ":.github/actions/check",
+            "-f", "after=" + "d" * 40 + ":.github/actions/check",
+        ], calls[0])
+        self.assertEqual("before=" + "e" * 40 + ":", root_calls[0][-3])
+        self.assertEqual("after=" + "f" * 40 + ":", root_calls[0][-1])
+
+    def test_invalid_content_comparison_response_is_sanitized(self):
+        responses = [
+            "{",
+            '{"errors":[{"message":"no"}]}',
+            '{"data":{"repository":{"before":null,"after":null}}}',
+            '{"data":{"repository":{"before":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Commit"},"after":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Blob"}}}}',
+            '{"data":{"repository":{"before":{"oid":"short","__typename":"Blob"},"after":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","__typename":"Blob"}}}}',
+        ]
+        for response in responses:
+            with self.subTest(response=response), self.assertRaisesRegex(ValueError, "^content comparison failed$"):
+                updater.compare_contents("neutral/actions", "", "a" * 40, "b" * 40, lambda _: mock.Mock(stdout=response))
+        with self.assertRaisesRegex(ValueError, "^content comparison failed$"):
+            updater.compare_contents("neutral/actions", "", "a" * 40, "b" * 40, lambda _: (_ for _ in ()).throw(updater.subprocess.CalledProcessError(1, "gh")))
 
     def test_skips_literal_folded_and_multiline_quoted_scalars(self):
         path = self.write("scalars.yml", """steps:
@@ -80,7 +197,7 @@ uses: Neutral/Actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     uses: 'neutral/actions@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 """)
         comparisons = []
-        updater.update(self.project, ["neutral/actions"], files=[".github/workflows/scalars.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value))
+        updater.update(self.project, ["neutral/actions"], files=[".github/workflows/scalars.yml"], resolver=lambda _: "c" * 40, comparer=lambda *value: comparisons.append(value), content_comparer=lambda *_: True)
         content = path.read_text(encoding="utf-8")
         self.assertIn("neutral/actions@" + "a" * 40, content)
         self.assertIn("neutral/actions@" + "d" * 40, content)
@@ -99,7 +216,7 @@ uses: Neutral/Actions@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     def test_check_never_writes(self):
         path = self.write("ci.yml", "uses: neutral/actions@" + "a" * 40 + "\n")
         before = path.read_text(encoding="utf-8")
-        summary = updater.update(self.project, ["neutral/actions"], check=True, files=[".github/workflows/ci.yml"], resolver=lambda _: "e" * 40, comparer=lambda *_: None)
+        summary = updater.update(self.project, ["neutral/actions"], check=True, files=[".github/workflows/ci.yml"], resolver=lambda _: "e" * 40, comparer=lambda *_: None, content_comparer=lambda *_: True)
         self.assertTrue(summary["changed"])
         self.assertEqual(before, path.read_text(encoding="utf-8"))
 
@@ -124,11 +241,13 @@ uses: neutral/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
             with self.subTest(status=status):
                 path = self.write(status + ".yml", "uses: neutral/actions@" + "a" * 40 + "\n")
                 before = path.read_text(encoding="utf-8")
+                content_comparer = mock.Mock()
                 def run(arguments):
                     return mock.Mock(stdout=status + "\n")
                 with self.assertRaises(ValueError):
-                    updater.update(self.project, ["neutral/actions"], files=[".github/workflows/" + status + ".yml"], resolver=lambda _: "c" * 40, comparer=lambda repository, old, new: updater.compare_revisions(repository, old, new, run))
+                    updater.update(self.project, ["neutral/actions"], files=[".github/workflows/" + status + ".yml"], resolver=lambda _: "c" * 40, comparer=lambda repository, old, new: updater.compare_revisions(repository, old, new, run), content_comparer=content_comparer)
                 self.assertEqual(before, path.read_text(encoding="utf-8"))
+                content_comparer.assert_not_called()
 
     def test_check_reports_pending_change_without_writing(self):
         path = self.write("check.yml", "uses: neutral/actions@" + "a" * 40 + "\n")
