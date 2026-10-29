@@ -19,13 +19,13 @@
     "hooks": [],
     "permissions": {
       "claude_allow": [
-        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
-        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py)",
+        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/skills/scaffold/scripts/scaffold.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/skills/scaffold/scripts/scaffold.py)",
         "Bash(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)",
         "PowerShell(python -B ${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py)",
-        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/publish-update/scripts/caller.py)",
+        "Bash(python -B ${PLUGIN_ROOT}/.agents/github-actions/skills/publish-update/scripts/caller.py)",
         "Bash(python -B ${PLUGIN_ROOT}/skills/publish-update/scripts/caller.py)",
-        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/utility/publish-update/scripts/caller.py)",
+        "PowerShell(python -B ${PLUGIN_ROOT}/.agents/github-actions/skills/publish-update/scripts/caller.py)",
         "PowerShell(python -B ${PLUGIN_ROOT}/skills/publish-update/scripts/caller.py)"
       ],
       "codex_prefix_rules": [
@@ -39,7 +39,7 @@
             ],
             "-B",
             [
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py",
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/scaffold/scripts/scaffold.py",
               "${PLUGIN_ROOT}/skills/scaffold/scripts/scaffold.py"
             ]
           ],
@@ -48,7 +48,7 @@
             [
               "python",
               "-B",
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py"
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/scaffold/scripts/scaffold.py"
             ],
             [
               "python",
@@ -59,7 +59,7 @@
           "not_match": [
             [
               "python",
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/scaffold/scripts/scaffold.py"
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/scaffold/scripts/scaffold.py"
             ]
           ]
         },
@@ -73,7 +73,7 @@
             ],
             "-B",
             [
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/publish-update/scripts/caller.py",
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/publish-update/scripts/caller.py",
               "${PLUGIN_ROOT}/skills/publish-update/scripts/caller.py"
             ]
           ],
@@ -82,7 +82,7 @@
             [
               "python",
               "-B",
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/publish-update/scripts/caller.py"
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/publish-update/scripts/caller.py"
             ],
             [
               "python",
@@ -93,7 +93,7 @@
           "not_match": [
             [
               "python",
-              "${PLUGIN_ROOT}/.agents/github-actions/utility/publish-update/scripts/caller.py"
+              "${PLUGIN_ROOT}/.agents/github-actions/skills/publish-update/scripts/caller.py"
             ]
           ]
         }

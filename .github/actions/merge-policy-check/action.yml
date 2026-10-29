@@ -19,5 +19,5 @@ runs:
         POLICY: ${{ inputs.policy }}
       run: |
         python=$(command -v python3 || command -v python)
-        "$python" -B "$GITHUB_ACTION_PATH/../../../.agents/github-actions/utility/merge-policy/scripts/merge_policy.py" \
+        "$python" -B "$GITHUB_ACTION_PATH/../../../.agents/github-actions/skills/merge-policy/scripts/merge_policy.py" \
           check --repo "$GITHUB_REPOSITORY" --policy "$POLICY"

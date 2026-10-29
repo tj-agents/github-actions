@@ -1,9 +1,9 @@
 # github-actions
 
-This repository uses the plugin layout `template:check` documents and enforces
-(https://github.com/tj-agents/template). Authored skills live once under `.agents/<plugin>/<kind>/<name>/SKILL.md`,
-with each skill's scripts and templates beside it; related skills share a family folder, family first
-(`state/client/` publishes `state-client`). `.agents/sync_generated.py`, `.agents/sync-generated.ps1`,
+This repository uses the plugin layout `template:structure` owns and `template:check` enforces
+(https://github.com/tj-agents/template). Authored skills live once under `.agents/<plugin>/skills/<subject>/SKILL.md`,
+with kind in metadata and each skill's scripts and templates beside it.
+`.agents/sync_generated.py`, `.agents/sync-generated.ps1`,
 `.gitattributes`, `.gitignore`, `CLAUDE.md` and `.github/workflows/ci.yml` are vendored from the current Template.
 Change them in Template, then run `template:update` to refresh them.
 
@@ -12,13 +12,14 @@ Change them in Template, then run `template:update` to refresh them.
 before delivery.
 
 Before changing scaffolding, publisher enrollment or ruleset application, read the scopes owned by
-[publish-update](.agents/github-actions/utility/publish-update/SKILL.md) and
-[merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md). Their personal scope is not a
+[publish-update](.agents/github-actions/skills/publish-update/SKILL.md) and
+[merge-policy](.agents/github-actions/skills/merge-policy/SKILL.md). Their personal scope is not a
 package-wide default. Preserve the boundary in the [scaffold fixtures](.agents/tests/test_scaffold.py)
 and [merge-policy fixtures](.agents/tests/test_merge_policy.py).
 
-`knowledge` is Tommy's progress record: change it only under `learning`'s Progress rules. A `contract`
-skill gains a rule only through `learning`'s convention procedure, after Tommy decides it.
+The [learner record](.agents/github-actions/learning/knowledge.md) is Tommy's progress record: change it
+only under `github-actions:learning`'s Progress rules. A standard skill gains a rule only through
+`github-actions:learning`'s agreement procedure, after Tommy decides it.
 
 <!-- BEGIN personal:rules sha256:eee7a719bb90e67aaa81ac101a45836dd099bc745fee61216c99ec7d6075f12d -->
 # Personal rules
