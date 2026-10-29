@@ -1,15 +1,18 @@
 {
-  "schema_version": 1,
   "tier": "github-actions",
   "stack": "GitHub Actions",
   "applies": "stack-present",
-  "owner_repository": [
-    "tj-agents/github-actions"
-  ],
   "detect": {
-    "globs": [
-      ".github/workflows/*.yml",
-      ".github/workflows/*.yaml"
+    "any": [
+      {
+        "glob": ".github/workflows/*.yml"
+      },
+      {
+        "glob": ".github/workflows/*.yaml"
+      },
+      {
+        "remote": "^tj\\-agents/github\\-actions$"
+      }
     ]
   }
 }
