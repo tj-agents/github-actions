@@ -9,7 +9,7 @@ from unittest.mock import patch
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("lint_workflows_download", ROOT / ".agents/github-actions/utility/scaffold/templates/lint-workflows.py")
+SPEC = importlib.util.spec_from_file_location("lint_workflows_download", ROOT / ".agents/github-actions/skills/scaffold/templates/lint-workflows.py")
 SCRIPT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SCRIPT)
 

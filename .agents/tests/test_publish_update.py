@@ -8,7 +8,7 @@ from unittest import mock
 from test_merge_policy import FakeGh, HUMAN, merge_policy, rules
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
+SCRIPTS = ROOT / ".agents/github-actions/skills/publish-update/scripts"
 PUBLISH = ROOT / ".github/actions/publish-update/publish.py"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
 UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
