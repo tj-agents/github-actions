@@ -3,5 +3,12 @@
     "github-actions": [
       "github-actions"
     ]
-  }
+  },
+  "resources": [
+    {
+      "plugin": "github-actions",
+      "source": ".agents/github-actions/learning",
+      "destination": ".agents/github-actions/learning"
+    }
+  ]
 }

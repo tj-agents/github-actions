@@ -8,7 +8,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / ".agents/github-actions/utility/scaffold"
+SKILL = ROOT / ".agents/github-actions/skills/scaffold"
 SPEC = importlib.util.spec_from_file_location("workflow_scaffold", SKILL / "scripts/scaffold.py")
 scaffold = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scaffold)

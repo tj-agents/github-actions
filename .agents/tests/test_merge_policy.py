@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / ".agents/github-actions/utility/merge-policy/scripts/merge_policy.py"
+SCRIPT = ROOT / ".agents/github-actions/skills/merge-policy/scripts/merge_policy.py"
 SPEC = importlib.util.spec_from_file_location("merge_policy", SCRIPT)
 merge_policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_policy)

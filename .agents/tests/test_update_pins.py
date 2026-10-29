@@ -7,7 +7,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = ROOT / ".github/actions/update-pins/update_pins.py"
-CALLER = ROOT / ".agents/github-actions/utility/publish-update/scripts/caller.py"
+CALLER = ROOT / ".agents/github-actions/skills/publish-update/scripts/caller.py"
 
 
 def load(name, path):

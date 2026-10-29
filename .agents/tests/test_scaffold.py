@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / ".agents/github-actions/utility/scaffold"
+SKILL = ROOT / ".agents/github-actions/skills/scaffold"
 SCRIPT = SKILL / "scripts/scaffold.py"
 SPEC = importlib.util.spec_from_file_location("workflow_scaffold", SCRIPT)
 scaffold = importlib.util.module_from_spec(SPEC)

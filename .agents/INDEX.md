@@ -1,21 +1,20 @@
 # github-actions capabilities
 
-Generated from `.agents/<plugin>/<kind>/<family>/<member>/SKILL.md`; a skill's name is its folder path below the kind folder joined by hyphens.
+Generated from `.agents/<plugin>/skills/<family>/<member>/SKILL.md`; a skill's name is its folder path below skills/ joined by hyphens.
 
 ## github-actions
 
-- `build` — contract — core — `.agents/github-actions/contract/build/SKILL.md`
-- `domain-design` — contract — core — `.agents/github-actions/contract/domain-design/SKILL.md`
-- `errors` — contract — core — `.agents/github-actions/contract/errors/SKILL.md`
-- `explanation` — contract — core — `.agents/github-actions/contract/explanation/SKILL.md`
-- `libraries` — contract — core — `.agents/github-actions/contract/libraries/SKILL.md`
-- `security` — contract — core — `.agents/github-actions/contract/security/SKILL.md`
-- `structure` — contract — core — `.agents/github-actions/contract/structure/SKILL.md`
-- `style` — contract — core — `.agents/github-actions/contract/style/SKILL.md`
-- `testing` — contract — core — `.agents/github-actions/contract/testing/SKILL.md`
-- `direction` — knowledge — knowledge — `.agents/github-actions/knowledge/direction/SKILL.md`
-- `knowledge` — knowledge — knowledge — `.agents/github-actions/knowledge/knowledge/SKILL.md`
-- `learning` — knowledge — knowledge — `.agents/github-actions/knowledge/learning/SKILL.md`
-- `merge-policy` — utility — scaffold — `.agents/github-actions/utility/merge-policy/SKILL.md`
-- `publish-update` — utility — core — `.agents/github-actions/utility/publish-update/SKILL.md`
-- `scaffold` — utility — scaffold — `.agents/github-actions/utility/scaffold/SKILL.md`
+- `learning` — learning — knowledge — `.agents/github-actions/skills/learning/SKILL.md`
+- `merge-policy` — operation — scaffold — `.agents/github-actions/skills/merge-policy/SKILL.md`
+- `publish-update` — operation — core — `.agents/github-actions/skills/publish-update/SKILL.md`
+- `scaffold` — operation — scaffold — `.agents/github-actions/skills/scaffold/SKILL.md`
+- `direction` — reference — knowledge — `.agents/github-actions/skills/direction/SKILL.md`
+- `build` — standard — core — `.agents/github-actions/skills/build/SKILL.md`
+- `domain-design` — standard — core — `.agents/github-actions/skills/domain-design/SKILL.md`
+- `errors` — standard — core — `.agents/github-actions/skills/errors/SKILL.md`
+- `explanation` — standard — core — `.agents/github-actions/skills/explanation/SKILL.md`
+- `libraries` — standard — core — `.agents/github-actions/skills/libraries/SKILL.md`
+- `security` — standard — core — `.agents/github-actions/skills/security/SKILL.md`
+- `structure` — standard — core — `.agents/github-actions/skills/structure/SKILL.md`
+- `style` — standard — core — `.agents/github-actions/skills/style/SKILL.md`
+- `testing` — standard — core — `.agents/github-actions/skills/testing/SKILL.md`

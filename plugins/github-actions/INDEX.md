@@ -1,17 +1,16 @@
 # github-actions package capabilities
 
-- `build` — contract — core
-- `domain-design` — contract — core
-- `errors` — contract — core
-- `explanation` — contract — core
-- `libraries` — contract — core
-- `security` — contract — core
-- `structure` — contract — core
-- `style` — contract — core
-- `testing` — contract — core
-- `direction` — knowledge — knowledge
-- `knowledge` — knowledge — knowledge
-- `learning` — knowledge — knowledge
-- `merge-policy` — utility — scaffold
-- `publish-update` — utility — core
-- `scaffold` — utility — scaffold
+- `learning` — learning — knowledge
+- `merge-policy` — operation — scaffold
+- `publish-update` — operation — core
+- `scaffold` — operation — scaffold
+- `direction` — reference — knowledge
+- `build` — standard — core
+- `domain-design` — standard — core
+- `errors` — standard — core
+- `explanation` — standard — core
+- `libraries` — standard — core
+- `security` — standard — core
+- `structure` — standard — core
+- `style` — standard — core
+- `testing` — standard — core
