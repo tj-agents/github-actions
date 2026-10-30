@@ -66,14 +66,16 @@ def required_contexts(policy):
     return list(dict.fromkeys(contexts))
 
 
-def bypass_actors(policy):
+def bypass_actors(policy, updater_app=None):
     actors = [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]
     if policy.get("ci_pushes_default_branch"):
         actors.append({"actor_type": "DeployKey", "bypass_mode": "always"})
+    if updater_app is not None:
+        actors.append({"actor_id": updater_app, "actor_type": "Integration", "bypass_mode": "always"})
     return actors
 
 
-def ruleset(policy):
+def ruleset(policy, updater_app=None):
     human_review = not policy["agents_may_merge"]
     rules = [
         {"type": "deletion"},
@@ -97,7 +99,7 @@ def ruleset(policy):
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "bypass_actors": bypass_actors(policy),
+        "bypass_actors": bypass_actors(policy, updater_app),
         "rules": rules,
     }
 
@@ -117,6 +119,19 @@ def gh(arguments, payload=None, run=subprocess.run):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def updater_app_slug(owner):
+    return f"{owner.lower()}-pin-updater"
+
+
+def updater_app_id(owner, run=subprocess.run):
+    try:
+        return gh([f"apps/{updater_app_slug(owner)}"], run=run)["id"]
+    except PolicyError as error:
+        if "HTTP 404" in str(error):
+            return None
+        raise
+
+
 def require_personal_owner(owner):
     if owner.lower() not in {"tj-agents", "concertable", "tomjseery"}:
         raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
@@ -129,9 +144,11 @@ def require_personal_repository(repository):
         raise PolicyError("repository must be OWNER/NAME")
 
 
-def apply(repository, policy, dry_run=False, run=subprocess.run):
+def apply(repository, policy, dry_run=False, run=subprocess.run, updater_app=None):
     require_personal_repository(repository)
-    desired = ruleset(policy)
+    if updater_app is None:
+        updater_app = updater_app_id(repository.partition("/")[0], run=run)
+    desired = ruleset(policy, updater_app)
     existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) > 1:
@@ -224,14 +241,15 @@ def reconcile(repository, run=subprocess.run):
     policy = repository_policy(repository, run=run, ref=head)
     if policy is None:
         return {"repository": repository, "action": "undeclared", "revision": head}
-    desired = ruleset(policy)
+    updater_app = updater_app_id(repository.partition("/")[0], run=run)
+    desired = ruleset(policy, updater_app)
     existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) == 1:
         actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
         if matches_owned(actual, desired):
             return {"repository": repository, "action": "current", "revision": head}
-    action = apply(repository, policy, run=run)["action"]
+    action = apply(repository, policy, run=run, updater_app=updater_app)["action"]
     problems = check(repository, policy, quote(branch, safe=""), run=run)
     if problems:
         raise PolicyError(f"{repository}: {'; '.join(problems)}")

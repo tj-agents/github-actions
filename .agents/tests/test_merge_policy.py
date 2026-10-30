@@ -23,8 +23,8 @@ class FakeGh:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs.get("input")))
-        path = next(part for part in command[2:] if part.startswith(("repos/", "users/")))
-        value = self.responses.get(path, {})
+        path = next(part for part in command[2:] if part.startswith(("repos/", "users/", "apps/")))
+        value = self.responses.get(path, 404 if path.startswith("apps/") else {})
         if value == 404:
             return subprocess.CompletedProcess(command, 1, "", "gh: Not Found (HTTP 404)")
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
@@ -65,6 +65,11 @@ class PolicyTests(unittest.TestCase):
     def test_ci_pushes_let_deploy_keys_bypass(self):
         actors = merge_policy.ruleset({**HUMAN, "ci_pushes_default_branch": True})["bypass_actors"]
         self.assertIn({"actor_type": "DeployKey", "bypass_mode": "always"}, actors)
+
+    def test_the_owners_updater_app_may_push_the_default_branch(self):
+        actors = merge_policy.ruleset(HUMAN, updater_app=42)["bypass_actors"]
+        self.assertIn({"actor_id": 42, "actor_type": "Integration", "bypass_mode": "always"}, actors)
+        self.assertEqual("tj-agents-pin-updater", merge_policy.updater_app_slug("tj-agents"))
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
@@ -116,7 +121,7 @@ class ApplyTests(unittest.TestCase):
     def test_dry_run_never_writes(self):
         gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
         self.assertEqual("create", merge_policy.apply("tj-agents/r", HUMAN, dry_run=True, run=gh)["action"])
-        self.assertEqual(1, len(gh.calls))
+        self.assertFalse(any("--method" in command for command, _ in gh.calls))
 
     def test_api_failure_is_reported(self):
         def failing(command, **kwargs):
