@@ -95,7 +95,7 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("if: vars.UPDATE_APP_CLIENT_ID != '' && " + default_ref, updater)
         self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("uses: actions/checkout"))
         self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("private-key:"))
-        self.assertIn("environment: update-pins", updater)
+        self.assertNotIn("environment:", updater)
         self.assertIn("repositories: ${{ inputs.repositories || 'tj-agents/github-actions' }}", updater)
         self.assertRegex(updater, r"uses: tj-agents/github-actions/\.github/actions/update-pins@[0-9a-f]{40}")
         token_step = updater.split("      - name: Mint repository token\n", 1)[1].split("      - name: Update shared action pins", 1)[0]
@@ -127,6 +127,18 @@ class ReconcileTests(unittest.TestCase):
         gh = FakeGh(responses)
         self.assertEqual("updated", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
         self.assertEqual(1, sum("PUT" in command for command, _ in gh.calls))
+
+    def test_existing_updater_app_is_added_as_an_always_bypass_actor(self):
+        responses = self.responses()
+        responses["apps/tj-agents-pin-updater"] = {"id": 42}
+        gh = FakeGh(responses)
+        self.assertEqual("updated", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
+        written = [json.loads(payload) for command, payload in gh.calls if "PUT" in command]
+        self.assertEqual(1, len(written))
+        self.assertIn({"actor_id": 42, "actor_type": "Integration", "bypass_mode": "always"}, written[0]["bypass_actors"])
+        responses["repos/tj-agents/core/rulesets/3"] = merge_policy.ruleset(HUMAN, updater_app=42)
+        gh = FakeGh(responses)
+        self.assertEqual("current", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
 
     def test_no_file_never_invents_a_gate(self):
         responses = self.responses()

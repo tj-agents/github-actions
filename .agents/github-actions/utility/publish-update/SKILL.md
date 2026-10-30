@@ -46,12 +46,25 @@ act, and this public workflow never merges code.
 
 The colocated `update-pins` action updates full-SHA `uses:` references in tracked `.github` YAML only when
 the referenced action or workflow content changes, then opens a pull request with a repository-scoped App
-token. The canonical workflow owns its `update-pins`
-environment, which holds the private App credential and restricts it to the default branch. Configure
-`UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
-Install the App only in selected repositories; generated trigger workflows explicitly map the private-key
-secret while the canonical workflow requests a token for its current repository. Core CI computes export
-and digest hashes; this action does not update them.
+token. Template's `plugin-ci` uses the same App to push regenerated output to the default branch. The App
+is `<owner>-pin-updater`, installed on all repositories, with `UPDATE_APP_CLIENT_ID` an organization
+variable and `UPDATE_APP_PRIVATE_KEY` an organization secret. Generated trigger workflows explicitly map
+the private-key secret while the canonical workflow requests a token for its current repository. Core CI
+computes export and digest hashes; this action does not update them.
+
+An organization owner configures all of it once, in their own terminal, from any checkout:
+
+```text
+python -B scripts/owner_setup.py --owner tj-agents
+python -B scripts/owner_setup.py --owner tj-agents --apply
+```
+
+The first command previews; `--apply` finds or creates the App on GitHub, waits for its installation on
+All repositories, sets the variable and secret, adds the App as an always-bypass actor to organization
+default-branch rulesets and reconciles every declared merge policy. When the secret is absent it opens the
+App's private-key page and asks for the downloaded `.pem`; `--rotate`, `--key-file <path>` or `--key-stdin`
+replace the one organization secret. It refuses agent sessions and token overrides, and stores nothing
+locally.
 
 For an existing fleet, `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>`
 prepares each repository caller without cloning repositories. Preparation writes caller files for review;

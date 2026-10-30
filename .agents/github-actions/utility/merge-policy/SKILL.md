@@ -32,6 +32,8 @@ A repository records who may merge in `.github/merge-policy.json`:
   that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
   actor, so that job pushes with a write deploy key whose private key is a secret of an environment
   limited to the default branch; a workflow on any other branch cannot read it.
+- When the owner's `<owner>-pin-updater` App exists, it may always push the default branch, so pipelines
+  publish generated output without a deploy key; `publish-update`'s owner setup creates it.
 - `agents_may_merge: true`: no approval; agents merge once `required_checks` and the optional
   `review_check` (an automated review job on the PR head) pass. A repository without the file has no gate.
 
