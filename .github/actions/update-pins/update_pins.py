@@ -224,6 +224,10 @@ def generated_publisher(path: Path, content: str, revisions: dict[str, str]) -> 
         raise ValueError("published action is missing its caller generator")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    # A newer repository head does not imply that this workflow changed. The
+    # ordinary content comparison has already advanced references that need it.
+    if normalized == module.render(references[0].group("sha")):
+        return content
     rendered = module.render(revision)
     if not isinstance(rendered, str):
         raise ValueError("publisher caller generator returned invalid content")
