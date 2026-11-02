@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Apply or check Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing who may merge in it, or protecting its default branch.
+description: Apply or check Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -16,23 +16,26 @@ repositories under `tj-agents`, `Concertable` or `tomjseery`; `apply`, `sync` an
 other owners before contacting GitHub. Employer repositories keep their own protections. Selecting
 GitHub Actions alone does not adopt this policy.
 
-A repository records who may merge in `.github/merge-policy.json`:
+A repository records whether a PR needs human approval before it can merge, not who is allowed to click
+merge, in `.github/merge-policy.json`:
 
 ```json
 {
-  "agents_may_merge": false,
+  "requires_approval": true,
   "required_checks": ["ci-required"]
 }
 ```
 
-- `agents_may_merge: false`: every PR needs one non-author approval. That approval remains valid after
-  later pushes to the same PR; required checks and source review still apply to the current head. Agents
-  push as the bot account, so the approver is Tommy.
+- `requires_approval: true`: every PR needs one non-author approval before it merges. That approval
+  remains valid after later pushes to the same PR; required checks and source review still apply to the
+  current head. Agents push as the bot account, so the approver is Tommy. Once that approval and the
+  required checks are in place, merging the PR — by Tommy or by an agent — is not separately gated; the
+  ruleset only enforces that the approval and checks exist first.
 - `ci_pushes_default_branch: true`: deploy keys may push to the default branch, for a post-merge job
   that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
   actor, so that job pushes with a write deploy key whose private key is a secret of an environment
   limited to the default branch; a workflow on any other branch cannot read it.
-- `agents_may_merge: true`: no approval; agents merge once `required_checks` and the optional
+- `requires_approval: false`: no approval; a PR merges once `required_checks` and the optional
   `review_check` (an automated review job on the PR head) pass. A repository without the file has no gate.
 
 Every policy requires a PR and blocks deletion and force-push of the default branch. The repository admin

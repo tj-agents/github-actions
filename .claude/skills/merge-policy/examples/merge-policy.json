@@ -1,4 +1,4 @@
 {
-  "agents_may_merge": false,
+  "requires_approval": true,
   "required_checks": ["ci-required"]
 }
