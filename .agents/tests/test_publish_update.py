@@ -276,3 +276,20 @@ def test_caller_regeneration_refuses_to_drop_custom_jobs(tmp_path: Path) -> None
             content_comparer=lambda *_: True,
         )
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_unchanged_publisher_workflow_preserves_its_pin(tmp_path: Path) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = caller.render("a" * 40)
+    path.write_text(before, encoding="utf-8")
+    summary = updater.update(
+        tmp_path,
+        ["tj-agents/github-actions"],
+        files=[".github/workflows/publish-update.yml"],
+        resolver=lambda _: "b" * 40,
+        comparer=lambda *_: None,
+        content_comparer=lambda *_: False,
+    )
+    assert not summary["changed"]
+    assert path.read_text(encoding="utf-8") == before
