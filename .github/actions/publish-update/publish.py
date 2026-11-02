@@ -39,7 +39,13 @@ def hint(
         or not re.fullmatch(r"[0-9a-f]{40}", run.get("head_sha", ""))
     ):
         return None
-    paths = set(changed or [])
+    # workflow_run does not retain the original push's before SHA. Include every
+    # category when the unpublished range is unknown; consumers re-read source.
+    paths = (
+        set(changed)
+        if changed is not None
+        else {"plugins/", ".github/merge-policy.json"}
+    )
     changes = ["repository"]
     if ".github/merge-policy.json" in paths:
         changes.append("merge-policy")
@@ -72,8 +78,7 @@ def verified_revision(
     revision = event["workflow_run"]["head_sha"]
     if commit.get("sha") != revision:
         return None
-    parents = commit.get("parents", [])
-    return {"before": parents[0]["sha"] if parents else "0" * 40, "after": revision}
+    return {"after": revision}
 
 
 def publish(
@@ -93,33 +98,6 @@ def publish(
         response.read(4096)
 
 
-def changed_paths(
-    event: dict[str, Any],
-    repository: str,
-    token: str,
-    opener: Callable[..., Any] = urllib.request.urlopen,
-) -> list[str] | None:
-    before, after = event.get("before", ""), event.get("after", "")
-    if not all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in (before, after)):
-        return None
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repository}/compare/{before}...{after}",
-        headers={
-            "Authorization": "Bearer " + token,
-            "Accept": "application/vnd.github+json",
-        },
-    )
-    try:
-        with opener(request, timeout=20) as response:
-            result = json.loads(response.read(4194304))
-        files = result.get("files", [])
-        if len(files) >= 300:
-            return ["plugins/", ".github/merge-policy.json"]
-        return [item["filename"] for item in files]
-    except (OSError, ValueError, KeyError):
-        return ["plugins/", ".github/merge-policy.json"]
-
-
 def main() -> int:
     event = json.loads(
         Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8")
@@ -128,11 +106,7 @@ def main() -> int:
     validate_repository(repository)
     token = os.environ["GH_TOKEN"]
     revision = verified_revision(event, repository, token)
-    message = (
-        hint(event, repository, changed_paths(revision, repository, token))
-        if revision is not None
-        else None
-    )
+    message = hint(event, repository) if revision is not None else None
     if message is not None:
         publish(os.environ["UPDATE_TOPIC"], message)
     return 0

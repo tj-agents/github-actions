@@ -104,7 +104,7 @@ def test_uses_actual_default_branch() -> None:
         "v": 1,
         "repo": "openai/tools",
         "sha": "b" * 40,
-        "changes": ["repository"],
+        "changes": ["repository", "merge-policy", "marketplace"],
     }
 
 
@@ -137,7 +137,7 @@ def test_head_verification_blocks_stale_and_failed_runs() -> None:
         {"sha": "b" * 40, "parents": [{"sha": "a" * 40}]}
     ).encode()
     revision = publish.verified_revision(event, "tj-agents/core", "token", opener)
-    assert revision == {"before": "a" * 40, "after": "b" * 40}
+    assert revision == {"after": "b" * 40}
     response.read.return_value = json.dumps({"sha": "c" * 40}).encode()
     assert publish.verified_revision(event, "tj-agents/core", "token", opener) is None
     opener.reset_mock()
@@ -146,16 +146,11 @@ def test_head_verification_blocks_stale_and_failed_runs() -> None:
     opener.assert_not_called()
 
 
-def test_compare_truncation_is_conservative() -> None:
-    event = {"before": "a" * 40, "after": "b" * 40}
-    opener = mock.MagicMock()
-    opener.return_value.__enter__.return_value.read.return_value = json.dumps(
-        {"files": [{"filename": "x"}] * 300}
-    ).encode()
-    paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
-    message = publish.hint(completed("tj-agents/core"), "tj-agents/core", paths)
+def test_unknown_push_range_includes_all_categories() -> None:
+    # The head may be regeneration or the last commit of a multi-commit push.
+    message = publish.hint(completed("tj-agents/core"), "tj-agents/core")
     assert message is not None
-    assert "marketplace" in message["changes"]
+    assert message["changes"] == ["repository", "merge-policy", "marketplace"]
 
 
 def test_uniform_caller_waits_for_ci_and_has_read_only_permissions() -> None:
@@ -292,4 +287,28 @@ def test_unchanged_publisher_workflow_preserves_its_pin(tmp_path: Path) -> None:
         content_comparer=lambda *_: False,
     )
     assert not summary["changed"]
+    assert path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("custom", ["condition", "secret"])
+def test_caller_regeneration_preserves_custom_publication_controls(
+    tmp_path: Path, custom: str
+) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = caller.render("a" * 40)
+    if custom == "condition":
+        before = before.replace("  publish:\n", "  publish:\n    if: false\n")
+    else:
+        before = before.replace("secrets.UPDATE_TOPIC", "secrets.CUSTOM_TOPIC")
+    path.write_text(before, encoding="utf-8")
+    with pytest.raises(ValueError, match="custom publisher workflow"):
+        updater.update(
+            tmp_path,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/publish-update.yml"],
+            resolver=lambda _: "b" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+        )
     assert path.read_text(encoding="utf-8") == before
