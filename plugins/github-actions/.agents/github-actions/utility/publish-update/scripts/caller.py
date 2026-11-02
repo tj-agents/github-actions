@@ -8,7 +8,9 @@ def render(revision):
         raise ValueError("publisher revision must be a full commit SHA")
     return f"""name: Publish update
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
 permissions:
   contents: read
 jobs:

@@ -1,6 +1,6 @@
 ---
 name: publish-update
-description: Publish a configured repository's default-branch update hint for an independently authorized consumer. Use when enrolling a repository or rendering its shared publisher workflow.
+description: Publish a configured repository's verified default-branch update hint for an independently authorized consumer. Use when enrolling a repository or rendering its shared publisher workflow.
 kind: utility
 domain: github-actions
 profile: core
@@ -35,18 +35,24 @@ Render the scheduled pin updater with an explicit action-repository allowlist:
 python -B scripts/caller.py --updater --revision <40-character-sha> --repositories <owner/repository>[,<owner/repository>]
 ```
 
-The publisher caller runs on every push, and the canonical workflow publishes only the repository's default
-branch from the push payload. Shared generation pipelines invoke the publisher directly after their
-generated-file push.
-A job that pushes generated plugins with `GITHUB_TOKEN` must also call the same action after its push
-with `published: 'true'`, because that push does not trigger another workflow.
+The thin publisher caller listens for a completed `ci` workflow run. The canonical workflow accepts only a
+successful `ci` run for a push on its own repository's default branch; pull requests, forks and unsuccessful
+runs publish nothing. Before publishing, it re-reads the current default-branch head and suppresses a run
+whose SHA is no longer current. The v1 hint includes that verified SHA as well as the repository and change
+categories.
+
+Observed sequence: source merge → regeneration commit → successful CI at the current default-branch head →
+notification. A failed or superseded CI run produces no notification. Do not add a direct post-push publisher
+call or a `published: 'true'` bypass; the verified CI completion is the publication path.
 
 Possession of the ntfy topic is not authentication or consumer authority. The receiver decides whether to
 act, and this public workflow never merges code.
 
 The colocated `update-pins` action updates full-SHA `uses:` references in tracked `.github` YAML only when
-the referenced action or workflow content changes, then opens a pull request with a repository-scoped App
-token. The canonical workflow owns its `update-pins`
+the referenced action or workflow content changes. When advancing the GitHub Actions revision, it also
+regenerates an already enrolled thin `publish-update.yml` through the same caller generator, so its trigger
+matches the verified-CI caller; it preserves CRLF and refuses regeneration that would discard custom jobs or
+settings. It then opens a pull request with a repository-scoped App token. The canonical workflow owns its `update-pins`
 environment, which holds the private App credential and restricts it to the default branch. Configure
 `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
 Install the App only in selected repositories; generated trigger workflows explicitly map the private-key
