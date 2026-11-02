@@ -1,0 +1,34 @@
+[project]
+name = "github-actions-development"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["mypy>=2.4.0", "pytest>=9.1.1", "ruff>=0.17.1"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+include = [".github/actions/publish-update/publish.py", ".agents/tests/test_publish_update.py"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "PIE", "RET", "RUF"]
+
+[tool.mypy]
+strict = true
+warn_unreachable = true
+files = [".github/actions/publish-update/publish.py", ".agents/tests/test_publish_update.py"]
+
+[[tool.mypy.overrides]]
+module = ["test_merge_policy"]
+follow_imports = "skip"
+
+[tool.pytest]
+strict = true
+testpaths = [".agents/tests"]
+pythonpath = [".agents/tests"]
+addopts = ["--import-mode=importlib", "-ra"]
+filterwarnings = ["error"]
