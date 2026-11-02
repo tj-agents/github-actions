@@ -211,12 +211,6 @@ def generated_publisher(path: Path, content: str, revisions: dict[str, str]) -> 
             or references[0].group("subpath") != "/.github/workflows/publish-update.yml"):
         return content
     normalized = content.replace("\r\n", "\n")
-    jobs = normalized.split("\njobs:\n", 1)
-    if (len(jobs) != 2 or re.findall(r"^  ([A-Za-z0-9_-]+):", jobs[1], re.MULTILINE) != ["publish"]
-            or re.search(r"^\s+(steps|run|env|with):", jobs[1], re.MULTILINE)
-            or re.findall(r"^([a-z_]+):", normalized, re.MULTILINE) != ["name", "on", "permissions", "jobs"]
-            or re.findall(r"^      ([A-Za-z0-9_-]+):", jobs[1], re.MULTILINE) != ["UPDATE_TOPIC"]):
-        raise ValueError("custom publisher workflow requires review before regeneration")
     source = (Path(__file__).resolve().parents[3]
               / ".agents/github-actions/utility/publish-update/scripts/caller.py")
     spec = importlib.util.spec_from_file_location("publisher_caller", source)
@@ -224,10 +218,15 @@ def generated_publisher(path: Path, content: str, revisions: dict[str, str]) -> 
         raise ValueError("published action is missing its caller generator")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    # A newer repository head does not imply that this workflow changed. The
-    # ordinary content comparison has already advanced references that need it.
-    if normalized == module.render(references[0].group("sha")):
+    current = module.render(references[0].group("sha"))
+    if normalized == current:
         return content
+    # Only the two exact previously generated trigger shapes are owned here.
+    old_trigger = "  workflow_run:\n    workflows: [ci]\n    types: [completed]\n"
+    legacy = [current.replace(old_trigger, trigger) for trigger in (
+        "  push:\n", "  push:\n    branches: [main]\n")]
+    if normalized not in legacy:
+        raise ValueError("custom publisher workflow requires review before regeneration")
     rendered = module.render(revision)
     if not isinstance(rendered, str):
         raise ValueError("publisher caller generator returned invalid content")
