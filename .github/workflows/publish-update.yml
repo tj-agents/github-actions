@@ -23,6 +23,6 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Publish repository update
-        uses: tj-agents/github-actions/.github/actions/publish-update@ab1ac0d9ede30d2fe94a6df5fab6cada06f84e7e
+        uses: tj-agents/github-actions/.github/actions/publish-update@d0b09b48e66a0fa55d3e23a0feadb4fda95034d0
         with:
           topic: ${{ secrets.UPDATE_TOPIC }}
