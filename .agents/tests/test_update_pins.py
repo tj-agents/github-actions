@@ -40,6 +40,9 @@ class UpdatePinsTests(unittest.TestCase):
         self.project = Path(self.temporary.name)
         self.workflows = self.project / ".github/workflows"
         self.workflows.mkdir(parents=True)
+        marker = self.project / ".agents/plugins/template.json"
+        marker.parent.mkdir(parents=True)
+        marker.write_text('{"schema_version":1,"repository":"tj-agents/plugin","type":"utility"}\n', encoding="utf-8")
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -48,6 +51,35 @@ class UpdatePinsTests(unittest.TestCase):
         path = self.workflows / name
         path.write_text(content, encoding="utf-8", newline="")
         return path
+
+    def test_template_marker_bootstrap_renders_valid_complete_caller(self):
+        ci = self.write("ci.yml", TEMPLATE_CI)
+        updater.update(
+            self.project, ["tj-agents/github-actions"], files=[".github/workflows/ci.yml"],
+            resolver=lambda _: "b" * 40, bootstrap_callers=True,
+            target_repository="tj-agents/plugin",
+        )
+        expected = TEMPLATE_CI + "    secrets:\n      UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}\n"
+        self.assertEqual(expected, ci.read_text(encoding="utf-8"))
+        self.assertEqual(expected, updater.migrate_template_ci(expected))
+
+    def test_bootstrap_refuses_removed_declaration_before_any_lookup_or_write(self):
+        (self.project / ".agents/plugins/template.json").unlink()
+        ci = self.write("ci.yml", TEMPLATE_CI)
+        resolver = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "no matching enrollment declaration"):
+            updater.update(
+                self.project, ["tj-agents/github-actions"], files=[".github/workflows/ci.yml"],
+                resolver=resolver, bootstrap_callers=True, target_repository="tj-agents/plugin",
+            )
+        resolver.assert_not_called()
+        self.assertEqual(TEMPLATE_CI, ci.read_text(encoding="utf-8"))
+
+    def test_declaration_reader_is_bounded_without_broadening_tracked_file_reader(self):
+        with self.assertRaisesRegex(ValueError, "unsafe tracked file"):
+            updater.read_file(self.project, ".agents/plugins/template.json")
+        with self.assertRaisesRegex(ValueError, "unsafe enrollment declaration"):
+            updater.read_declaration(self.project, ".agents/private.json")
 
     def test_bootstrap_adds_template_secret_and_updater_caller_idempotently(self):
         ci = self.write(
@@ -171,6 +203,8 @@ jobs:
         self.assertEqual(before, {path: path.read_bytes() for path in before})
 
     def test_central_repository_preserves_its_canonical_updater_workflow(self):
+        (self.project / ".agents/plugins/template.json").write_text(
+            '{"schema_version":1,"repository":"tj-agents/github-actions"}\n', encoding="utf-8")
         updater_path = self.write(
             "update-pins.yml",
             "name: Update shared action pins\njobs:\n  update:\n    runs-on: ubuntu-latest\n",

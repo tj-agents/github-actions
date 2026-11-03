@@ -100,8 +100,20 @@ def tracked_files(project, run=command):
 
 
 def read_file(root, relative):
+    if not relative.startswith(".github/"):
+        raise ValueError("unsafe tracked file")
+    return _read_project_file(root, relative)
+
+
+def read_declaration(root, relative):
+    if relative not in {".agents/plugins/template.json", ".github/update-enrollment.json"}:
+        raise ValueError("unsafe enrollment declaration")
+    return _read_project_file(root, relative)
+
+
+def _read_project_file(root, relative):
     path = PurePosixPath(relative)
-    if path.is_absolute() or ".." in path.parts or not relative.startswith(".github/"):
+    if path.is_absolute() or ".." in path.parts:
         raise ValueError("unsafe tracked file")
     target = root.joinpath(*path.parts)
     current = root
@@ -268,7 +280,7 @@ def migrate_template_ci(content):
                 match.group("secrets"), match.group("secrets") + updater_secret + "\n", 1
             )
         else:
-            migrated = normalized[:-1] + "    secrets:\n" + updater_secret + "\n"
+            migrated = normalized + "    secrets:\n" + updater_secret + "\n"
     else:
         migrated = normalized
     return migrated.replace("\n", "\r\n") if "\r\n" in content else migrated
@@ -301,6 +313,7 @@ def migrate_updater_caller(content, revision, repositories):
 def validate_repository_identity(root, repository):
     if not REPOSITORY.fullmatch(repository):
         raise ValueError("invalid target consumer repository")
+    found = False
     for relative in (
         ".agents/plugins/template.json",
         ".github/update-enrollment.json",
@@ -308,8 +321,9 @@ def validate_repository_identity(root, repository):
         path = root / relative
         if not path.exists():
             continue
+        found = True
         try:
-            _, text = read_file(root, relative)
+            _, text = read_declaration(root, relative)
             declaration = json.loads(text)
         except (OSError, ValueError) as error:
             raise ValueError("consumer enrollment declaration is invalid") from error
@@ -325,6 +339,8 @@ def validate_repository_identity(root, repository):
             )
         ):
             raise ValueError("consumer enrollment declaration does not match target repository")
+    if not found:
+        raise ValueError("consumer has no matching enrollment declaration")
 
 
 def update(
@@ -341,7 +357,9 @@ def update(
     root = Path(project).resolve()
     if not root.is_dir():
         raise ValueError("project is not a directory")
-    if bootstrap_callers and target_repository:
+    if bootstrap_callers:
+        if not target_repository:
+            raise ValueError("bootstrap requires an explicit target repository")
         validate_repository_identity(root, target_repository)
     documents = [read_file(root, relative) for relative in (tracked_files(root) if files is None else files)]
     revisions = {repository.lower(): resolver(repository) for repository in repositories}
