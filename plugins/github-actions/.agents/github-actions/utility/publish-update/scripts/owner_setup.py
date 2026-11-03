@@ -5,7 +5,7 @@
 # ///
 """Configure the protected publisher and enrollment GitHub Apps once.
 
-Requires Python 3.9+ and the GitHub CLI.
+Requires Python 3.12+, uv and the GitHub CLI.
 
 Without --apply it only describes the changes. With --apply, run by an
 organization owner in their own terminal, it creates or finds
