@@ -52,12 +52,35 @@ The colocated `update-pins` action updates full-SHA `uses:` references in tracke
 the referenced action or workflow content changes. When advancing the GitHub Actions revision, it also
 regenerates an already enrolled thin `publish-update.yml` through the same caller generator, so its trigger
 matches the verified-CI caller; it preserves CRLF and refuses regeneration that would discard custom jobs or
-settings. It then opens a pull request with a repository-scoped App token. The canonical workflow owns its `update-pins`
-environment, which holds the private App credential and restricts it to the default branch. Configure
-`UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment secret.
-Install the App only in selected repositories; generated trigger workflows explicitly map the private-key
-secret while the canonical workflow requests a token for its current repository. Core CI computes export
-and digest hashes; this action does not update them.
+settings. It then opens a pull request with a repository-scoped App token. Both pin updates and Template's
+regeneration select the caller's `update-pins` environment, restricted to its exact default branch.
+`UPDATE_APP_CLIENT_ID` is an organization variable. `UPDATE_APP_PRIVATE_KEY` is an environment secret;
+the caller still passes it by name to the reusable workflow. Core CI computes export and digest hashes;
+this action does not update them.
+
+An organization owner bootstraps publication once from this skill directory:
+
+```text
+python -B scripts/owner_setup.py --owner tj-agents
+python -B scripts/owner_setup.py --owner tj-agents --apply
+```
+
+Preview is offline. Apply requires the owner's own GitHub sign-in and refuses agent sessions and token
+overrides. It configures `<owner>-pin-updater` for contents, pull requests and workflows write, plus a
+separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and
+environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
+environment. Only the updater key reaches consumer `update-pins` environments.
+
+Enrollment selects same-owner, non-fork, non-archived repositories whose default-branch
+`.agents/plugins/template.json` names that repository. It verifies exact branch restrictions before
+uploading a key, preserves additional deployment protections, and reconciles each declared merge policy
+with the verified updater App bypass. Bootstrap removes legacy unprotected updater secrets only after
+replacement metadata is read back. Key values never appear in diagnostics or local enrollment state.
+
+Trusted central automation uses `scripts/enrollment.py` to enroll future repositories through the same
+implementation. Its apply path requires the central repository's current default branch and a controller
+installation token. First token minting, post-merge publication and installed startup still require actual
+rollout verification; successful source checks do not establish them.
 
 For an existing fleet, `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>`
 prepares each repository caller without cloning repositories. Preparation writes caller files for review;

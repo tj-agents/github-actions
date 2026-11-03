@@ -212,6 +212,63 @@ def test_enrolls_only_owned_nonfork_template_repositories_with_env_key() -> None
     assert fake.calls[branch_write_index][2] == {"name": "main", "type": "branch"}
 
 
+def test_preview_does_not_require_a_key_or_write() -> None:
+    fake = FakeGitHub({})
+    result = enrollment.enroll(FakeClient(fake), OWNER, 42, "", apply=False)
+    assert [item["repository"] for item in result] == ["tj-agents/plugin"]
+    assert all(method == "GET" for method, _, _ in fake.calls)
+
+
+def test_future_enrollment_reconciles_the_declared_policy_after_secret_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeGitHub({})
+    reconciled = []
+
+    def reconcile(gh: Any, repository: str, app_id: int) -> str:
+        assert fake.env_secrets[repository] == [{"name": enrollment.SECRET}]
+        assert app_id == 42
+        reconciled.append(repository)
+        return "created"
+
+    monkeypatch.setattr(enrollment, "reconcile_policy", reconcile)
+    result = enrollment.enroll(FakeClient(fake), OWNER, 42, APP_KEY, apply=True)
+    assert reconciled == ["tj-agents/plugin"]
+    assert result[0]["merge_policy"] == "created"
+
+
+def test_enrollment_renders_and_reads_back_the_updater_bypass() -> None:
+    repository = "tj-agents/plugin"
+    policy = {"requires_approval": True, "required_checks": ["verify / hosts"]}
+    state = repo_state(repository)
+    state[f"repos/{repository}/contents/.github/merge-policy.json?ref={SHA}"] = {
+        "content": base64.encodebytes(json.dumps(policy).encode()).decode()
+    }
+
+    class PolicyGitHub(FakeGitHub):
+        def api(
+            self, path: str, method: str = "GET", body: dict[str, Any] | None = None
+        ) -> Any:
+            if path == f"repos/{repository}/rulesets?per_page=100&page=1":
+                return []
+            if path == f"repos/{repository}/rulesets" and method == "POST":
+                assert body is not None
+                self.state[path + "/17"] = {"id": 17, **body}
+                return self.state[path + "/17"]
+            return super().api(path, method, body)
+
+    fake = PolicyGitHub(state)
+    assert enrollment.reconcile_policy(fake, repository, 42) == "created"
+    actual = fake.state[f"repos/{repository}/rulesets/17"]
+    assert {
+        "actor_id": 42,
+        "actor_type": "Integration",
+        "bypass_mode": "always",
+    } in actual["bypass_actors"]
+    review = next(rule for rule in actual["rules"] if rule["type"] == "pull_request")
+    assert review["parameters"]["required_approving_review_count"] == 1
+
+
 def test_template_marker_requires_schema_and_matching_target_repository() -> None:
     class Content:
         def __init__(self, config: dict[str, Any]):

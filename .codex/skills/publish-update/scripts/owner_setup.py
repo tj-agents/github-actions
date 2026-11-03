@@ -49,9 +49,6 @@ PEM = re.compile(
     r"-----BEGIN (?:RSA )?PRIVATE KEY-----\r?\n"
     r"[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PRIVATE KEY-----\s*"
 )
-MERGE_POLICY = (
-    Path(__file__).resolve().parents[2] / "merge-policy" / "scripts" / "merge_policy.py"
-)
 ENROLLMENT = Path(__file__).resolve().with_name("enrollment.py")
 
 
@@ -551,15 +548,6 @@ def ensure_org_rulesets(
     return covered
 
 
-def load_merge_policy() -> Any:
-    spec = importlib.util.spec_from_file_location("merge_policy", MERGE_POLICY)
-    if spec is None or spec.loader is None:
-        raise SetupError("could not load merge-policy reconciliation")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def setup(
     owner: str,
     gh: GitHub,
@@ -649,17 +637,6 @@ def setup(
                 f"exposed organization secret {SECRET} removal read-back failed"
             )
     covered = ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
-    merge_policy = load_merge_policy()
-    failures = []
-    for result in results:
-        try:
-            result["merge_policy"] = merge_policy.reconcile(
-                result["repository"], run=gh.run, updater_app=updater["id"]
-            )["action"]
-        except merge_policy.PolicyError as error:
-            failures.append(f"{result['repository']}: {error}")
-    if failures:
-        raise SetupError("merge policy reconciliation failed:\n" + "\n".join(failures))
     print(
         f"Owner setup complete: {len(results)} Template repositories enrolled; "
         f"org rulesets {covered}",
