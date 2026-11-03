@@ -1,0 +1,40 @@
+name: Publish generated files
+description: Commit an explicit generated-file allowlist on its verified default branch.
+inputs:
+  token:
+    description: Repository-scoped GitHub App token with contents write.
+    required: true
+  paths:
+    description: Newline-separated relative generated paths to publish.
+    required: true
+  source-sha:
+    description: The exact default-branch source commit used by generation.
+    required: true
+  branch:
+    description: Repository default branch.
+    required: true
+  repository:
+    description: Repository in owner/name form.
+    required: false
+outputs:
+  published:
+    description: Whether a generated-file commit was pushed.
+    value: ${{ steps.publish.outputs.published }}
+  result:
+    description: Whether publication succeeded, was stale, or found no changes.
+    value: ${{ steps.publish.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Publish generated files
+      id: publish
+      shell: bash
+      env:
+        PUBLISH_TOKEN: ${{ inputs.token }}
+        PUBLISH_PATHS: ${{ inputs.paths }}
+        PUBLISH_SOURCE_SHA: ${{ inputs.source-sha }}
+        PUBLISH_BRANCH: ${{ inputs.branch }}
+        PUBLISH_REPOSITORY: ${{ inputs.repository || github.repository }}
+      run: |
+        python=$(command -v python3 || command -v python)
+        "$python" -B "$GITHUB_ACTION_PATH/publish_generated.py"
