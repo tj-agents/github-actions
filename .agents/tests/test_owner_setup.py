@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from urllib.error import URLError
@@ -139,7 +140,7 @@ def test_invalid_app_key_aborts_owner_setup_before_any_remote_write(
         "owner": {"login": owner},
         "permissions": owner_setup.CONTROLLER_PERMISSIONS,
     }
-    state = {
+    state: dict[str, Any] = {
         "legacy_org_secret": None,
         "slug": owner + "-pin-updater",
         "controller_slug": owner + "-enrollment-controller",
@@ -193,4 +194,56 @@ def test_legacy_exposure_requires_owner_key_revocation_before_migration(
             "tj-agents", gh, open_url=lambda _: None, prompt=lambda _: "not confirmed"
         )
     gh.api.assert_not_called()
+    gh.set_secret.assert_not_called()
+
+
+def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = "tj-agents"
+    updater = {
+        "id": 42,
+        "client_id": "Iv1.updater",
+        "owner": {"login": owner},
+        "permissions": owner_setup.PERMISSIONS,
+    }
+    controller = {
+        "id": 90,
+        "client_id": "Iv1.controller",
+        "owner": {"login": owner},
+        "permissions": owner_setup.CONTROLLER_PERMISSIONS,
+    }
+    state: dict[str, Any] = {
+        "legacy_org_secret": {"name": owner_setup.SECRET},
+        "slug": owner + "-pin-updater",
+        "controller_slug": owner + "-enrollment-controller",
+        "app": updater,
+        "controller": controller,
+        "variable": None,
+    }
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
+    monkeypatch.setattr(owner_setup, "app_key", lambda *_: "unused-test-key")
+    monkeypatch.setattr(owner_setup, "ensure_installation", lambda *_: None)
+    monkeypatch.setattr(owner_setup, "ensure_variable", lambda *_: None)
+    observed: list[tuple[str, bool]] = []
+
+    class StopAfterProtectionError(Exception):
+        pass
+
+    def protect(*args: Any, **kwargs: Any) -> None:
+        observed.append((args[4], kwargs["allow_exposed"]))
+        if args[4] == "update-enrollment":
+            raise StopAfterProtectionError
+
+    bridge = SimpleNamespace(
+        GitHub=lambda _: object(), verify_app_key=lambda *_: None, protected=protect
+    )
+    monkeypatch.setattr(owner_setup, "load_enrollment", lambda: bridge)
+    gh = mock.Mock()
+    gh.api.return_value = {"default_branch": "main"}
+    with pytest.raises(StopAfterProtectionError):
+        owner_setup.setup(
+            owner, gh, open_url=lambda _: None, prompt=lambda _: owner + "-pin-updater"
+        )
+    assert observed == [("update-pins", True), ("update-enrollment", False)]
     gh.set_secret.assert_not_called()
