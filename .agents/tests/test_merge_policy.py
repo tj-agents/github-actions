@@ -12,8 +12,8 @@ SPEC = importlib.util.spec_from_file_location("merge_policy", SCRIPT)
 merge_policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_policy)
 
-HUMAN = {"agents_may_merge": False, "required_checks": ["ci-required"]}
-AGENTS = {"agents_may_merge": True, "required_checks": ["ci-required"], "review_check": "agent-review"}
+HUMAN = {"requires_approval": True, "required_checks": ["ci-required"]}
+AGENTS = {"requires_approval": False, "required_checks": ["ci-required"], "review_check": "agent-review"}
 
 
 class FakeGh:
@@ -23,8 +23,8 @@ class FakeGh:
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs.get("input")))
-        path = next(part for part in command[2:] if part.startswith(("repos/", "users/", "apps/")))
-        value = self.responses.get(path, 404 if path.startswith("apps/") else {})
+        path = next(part for part in command[2:] if part.startswith(("repos/", "users/")))
+        value = self.responses.get(path, {})
         if value == 404:
             return subprocess.CompletedProcess(command, 1, "", "gh: Not Found (HTTP 404)")
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
@@ -43,10 +43,10 @@ class PolicyTests(unittest.TestCase):
         return path
 
     def test_invalid_policies_are_refused(self):
-        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True, "review_check": ""},
-                      {"agents_may_merge": False, "review_check": "agent-review"},
-                      {"agents_may_merge": False, "required_checks": [""]},
-                      {"agents_may_merge": False, "extra": 1}):
+        for value in ({}, {"requires_approval": "yes"}, {"requires_approval": False, "review_check": ""},
+                      {"requires_approval": True, "review_check": "agent-review"},
+                      {"requires_approval": True, "required_checks": [""]},
+                      {"requires_approval": True, "extra": 1}):
             with self.subTest(value=value), self.assertRaises(merge_policy.PolicyError):
                 merge_policy.load_policy(self.write(value))
 
@@ -65,11 +65,6 @@ class PolicyTests(unittest.TestCase):
     def test_ci_pushes_let_deploy_keys_bypass(self):
         actors = merge_policy.ruleset({**HUMAN, "ci_pushes_default_branch": True})["bypass_actors"]
         self.assertIn({"actor_type": "DeployKey", "bypass_mode": "always"}, actors)
-
-    def test_the_owners_updater_app_may_push_the_default_branch(self):
-        actors = merge_policy.ruleset(HUMAN, updater_app=42)["bypass_actors"]
-        self.assertIn({"actor_id": 42, "actor_type": "Integration", "bypass_mode": "always"}, actors)
-        self.assertEqual("tj-agents-pin-updater", merge_policy.updater_app_slug("tj-agents"))
 
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
@@ -121,7 +116,7 @@ class ApplyTests(unittest.TestCase):
     def test_dry_run_never_writes(self):
         gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
         self.assertEqual("create", merge_policy.apply("tj-agents/r", HUMAN, dry_run=True, run=gh)["action"])
-        self.assertFalse(any("--method" in command for command, _ in gh.calls))
+        self.assertEqual(1, len(gh.calls))
 
     def test_api_failure_is_reported(self):
         def failing(command, **kwargs):
@@ -156,7 +151,7 @@ class CheckTests(unittest.TestCase):
 
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
-        self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
+        self.assertTrue(any("but none should be" in problem for problem in self.check(AGENTS, rules(HUMAN))))
 
     def test_policies_reject_rules_that_invalidate_earlier_approvals(self):
         for policy in (HUMAN, AGENTS):
@@ -172,16 +167,16 @@ class CheckTests(unittest.TestCase):
 
     def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
         import base64
-        ci = {"agents_may_merge": False, "ci_pushes_default_branch": True}
+        ci = {"requires_approval": True, "ci_pushes_default_branch": True}
         encoded = base64.b64encode(json.dumps(ci).encode()).decode()
         responses = {
             "users/tj-agents/repos?type=owner&per_page=100&page=1": [
                 {"full_name": "tj-agents/new"}, {"full_name": "tj-agents/core"}, {"full_name": "tj-agents/done"},
                 {"full_name": "tj-agents/secret", "private": True}, {"full_name": "tj-agents/copy", "fork": True}],
             "repos/tj-agents/new/contents/.github/merge-policy.json": 404,
-            "repos/tj-agents/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"agents_may_merge": false}').decode()},
+            "repos/tj-agents/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"requires_approval": true}').decode()},
             "repos/tj-agents/core/contents/.github/merge-policy.json": {"content": encoded},
-            "repos/tj-agents/done/rules/branches/main?per_page=100": rules({"agents_may_merge": False}),
+            "repos/tj-agents/done/rules/branches/main?per_page=100": rules({"requires_approval": True}),
             "repos/tj-agents/new/rulesets?per_page=100": [],
             "repos/tj-agents/core/rulesets?per_page=100": [],
         }

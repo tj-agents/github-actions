@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -201,6 +202,37 @@ def pending_comparisons(content, revisions):
     return comparisons
 
 
+def generated_publisher(path: Path, content: str, revisions: dict[str, str]) -> str:
+    revision = revisions.get("tj-agents/github-actions")
+    if path.name != "publish-update.yml" or revision is None:
+        return content
+    references = [match for _, _, match in reference_matches(content)]
+    if (len(references) != 1 or references[0].group("repository").lower() != "tj-agents/github-actions"
+            or references[0].group("subpath") != "/.github/workflows/publish-update.yml"):
+        return content
+    normalized = content.replace("\r\n", "\n")
+    source = (Path(__file__).resolve().parents[3]
+              / ".agents/github-actions/utility/publish-update/scripts/caller.py")
+    spec = importlib.util.spec_from_file_location("publisher_caller", source)
+    if spec is None or spec.loader is None:
+        raise ValueError("published action is missing its caller generator")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    current = module.render(references[0].group("sha"))
+    if normalized == current:
+        return content
+    # Only the two exact previously generated trigger shapes are owned here.
+    old_trigger = "  workflow_run:\n    workflows: [ci]\n    types: [completed]\n"
+    legacy = [current.replace(old_trigger, trigger) for trigger in (
+        "  push:\n", "  push:\n    branches: [main]\n")]
+    if normalized not in legacy:
+        raise ValueError("custom publisher workflow requires review before regeneration")
+    rendered = module.render(revision)
+    if not isinstance(rendered, str):
+        raise ValueError("publisher caller generator returned invalid content")
+    return rendered.replace("\n", "\r\n") if "\r\n" in content else rendered
+
+
 def update(project, repositories, check=False, files=None, resolver=resolve_repository, comparer=compare_revisions, content_comparer=compare_contents):
     root = Path(project).resolve()
     if not root.is_dir():
@@ -216,7 +248,8 @@ def update(project, repositories, check=False, files=None, resolver=resolve_repo
     for repository, subpath, before, after in sorted(comparisons):
         if content_comparer(repository, subpath, before, after):
             replacements[(repository, subpath, before)] = after
-    proposals = [(path, content, replace_references(content, replacements)) for path, content in documents]
+    proposals = [(path, content, generated_publisher(path, replace_references(content, replacements), revisions))
+                 for path, content in documents]
     changed = [(path, updated) for path, original, updated in proposals if updated != original]
     if changed and not check:
         for path, content in changed:

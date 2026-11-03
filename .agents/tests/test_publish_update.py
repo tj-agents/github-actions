@@ -1,11 +1,17 @@
+"""Tests for verified repository update publication."""
+
+from __future__ import annotations
+
 import base64
 import importlib.util
 import json
+import re
 from pathlib import Path
-import unittest
+from typing import Any
 from unittest import mock
 
-from test_merge_policy import FakeGh, HUMAN, merge_policy, rules
+import pytest
+from test_merge_policy import HUMAN, FakeGh, merge_policy, rules
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
@@ -14,145 +20,295 @@ PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
 UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
 
 
-def load(name, path):
+def load(name: str, path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 caller = load("caller", SCRIPTS / "caller.py")
 publish = load("publish", PUBLISH)
+updater = load("publisher_updater", ROOT / ".github/actions/update-pins/update_pins.py")
 
 
-class PublisherTests(unittest.TestCase):
-    def test_default_branch_merge_reports_categories_without_contents(self):
-        event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}, "commits": [{"modified": ["plugins/a", ".github/merge-policy.json"]}]}
-        self.assertEqual({"v": 1, "repo": "octo/example", "changes": ["repository", "merge-policy", "marketplace"]},
-                         publish.hint(event, "octo/example"))
-        for ref in ("refs/pull/1/merge", "refs/heads/feature"):
-            self.assertIsNone(publish.hint({"ref": ref, "repository": {"default_branch": "main"}}, "octo/example"))
-        self.assertIsNone(publish.hint({"ref": "refs/heads/main", "repository": {"default_branch": "main"}, "deleted": True}, "octo/example"))
-        self.assertIsNone(publish.hint({"ref": "refs/heads/main"}, "octo/example"))
-
-    def test_uses_default_branch_from_push_repository(self):
-        event = {"ref": "refs/heads/trunk", "repository": {"default_branch": "trunk"}}
-        self.assertEqual({"v": 1, "repo": "openai/tools", "changes": ["repository"]},
-                         publish.hint(event, "openai/tools"))
-        self.assertIsNone(publish.hint({**event, "ref": "refs/heads/main"}, "openai/tools"))
-
-    def test_payload_never_uses_a_hinted_url_or_shell(self):
-        with self.assertRaises(ValueError):
-            publish.hint({}, "evil/repository/extra")
-        opener = mock.MagicMock()
-        with self.assertRaises(ValueError):
-            publish.publish("../../bad", {}, opener)
-        opener.assert_not_called()
-        message = publish.hint({"ref": "refs/heads/main", "repository": {"default_branch": "main"}, "commits": [{"modified": ["private-token.txt"]}]}, "any-owner/any-repository")
-        self.assertEqual({"v": 1, "repo": "any-owner/any-repository", "changes": ["repository"]}, message)
-        publish.publish("a" * 48, message, opener)
-        request = opener.call_args.args[0]
-        self.assertEqual("https://ntfy.sh/" + "a" * 48, request.full_url)
-        self.assertEqual(message, json.loads(request.data))
-        self.assertNotIn("private-token", request.data.decode())
-        self.assertEqual(20, opener.call_args.kwargs["timeout"])
-
-    def test_actions_push_payload_uses_compare_files_and_truncation_is_conservative(self):
-        event = {"ref": "refs/heads/main", "repository": {"default_branch": "main"}, "before": "a" * 40, "after": "b" * 40}
-        opener = mock.MagicMock()
-        opener.return_value.__enter__.return_value.read.return_value = json.dumps({"files": [{"filename": ".github/merge-policy.json"}]}).encode()
-        paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
-        self.assertIn("merge-policy", publish.hint(event, "tj-agents/core", paths)["changes"])
-        self.assertEqual(1, opener.call_count)
-        opener.return_value.__enter__.return_value.read.return_value = json.dumps({"files": [{"filename": "x"}] * 300}).encode()
-        paths = publish.changed_paths(event, "tj-agents/core", "token", opener=opener)
-        self.assertIn("marketplace", publish.hint(event, "tj-agents/core", paths)["changes"])
-
-    def test_uniform_caller_has_read_only_permissions_and_immutable_workflow(self):
-        value = caller.render("a" * 40)
-        self.assertIn("uses: tj-agents/github-actions/.github/workflows/publish-update.yml@" + "a" * 40, value)
-        self.assertIn("contents: read", value)
-        self.assertNotIn("schedule:", value)
-        self.assertIn("UPDATE_TOPIC: ${{ secrets.UPDATE_TOPIC }}", value)
-        self.assertNotIn("branches:", value)
-        self.assertNotIn("secrets.GH_TOKEN", value)
-        self.assertNotIn("runs-on:", value)
-        self.assertNotIn("steps:", value)
-        self.assertNotIn("concurrency:", value)
-        with self.assertRaises(ValueError):
-            caller.render("main")
-
-    def test_canonical_workflows_own_default_branch_guards_and_secret_contracts(self):
-        default_ref = "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
-        publisher = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-        updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("workflow_call:\n    secrets:\n      UPDATE_TOPIC:\n        required: false", publisher)
-        self.assertIn("if: vars.UPDATE_TOPIC != '' && " + default_ref, publisher)
-        self.assertRegex(publisher, r"uses: tj-agents/github-actions/\.github/actions/publish-update@[0-9a-f]{40}")
-        self.assertNotIn("actions/checkout", publisher)
-        self.assertIn("workflow_call:\n    inputs:\n      repositories:\n        required: true\n        type: string", updater)
-        self.assertIn("UPDATE_APP_PRIVATE_KEY:\n        required: true", updater)
-        self.assertIn("if: vars.UPDATE_APP_CLIENT_ID != '' && " + default_ref, updater)
-        self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("uses: actions/checkout"))
-        self.assertLess(updater.index("if: vars.UPDATE_APP_CLIENT_ID"), updater.index("private-key:"))
-        self.assertNotIn("environment:", updater)
-        self.assertIn("repositories: ${{ inputs.repositories || 'tj-agents/github-actions' }}", updater)
-        self.assertRegex(updater, r"uses: tj-agents/github-actions/\.github/actions/update-pins@[0-9a-f]{40}")
-        token_step = updater.split("      - name: Mint repository token\n", 1)[1].split("      - name: Update shared action pins", 1)[0]
-        self.assertIn("permission-contents: write", token_step)
-        self.assertIn("permission-pull-requests: write", token_step)
-        self.assertIn("permission-workflows: write", token_step)
-        self.assertNotIn("owner:", token_step)
-        self.assertNotIn("repositories:", token_step)
+def completed(repository: str = "octo/example", branch: str = "main") -> dict[str, Any]:
+    return {
+        "repository": {"default_branch": branch},
+        "workflow_run": {
+            "name": "ci",
+            "status": "completed",
+            "conclusion": "success",
+            "event": "push",
+            "head_branch": branch,
+            "head_sha": "b" * 40,
+            "head_repository": {"full_name": repository},
+        },
+    }
 
 
-class ReconcileTests(unittest.TestCase):
-    def responses(self, policy=HUMAN):
-        return {"repos/tj-agents/core": {"default_branch": "main"},
-                "repos/tj-agents/core/commits/main": {"sha": "b" * 40},
-                "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40:
-                    {"content": base64.b64encode(json.dumps(policy).encode()).decode()},
-                "repos/tj-agents/core/rulesets?per_page=100": [{"name": "merge-policy", "id": 3}],
-                "repos/tj-agents/core/rulesets/3": merge_policy.ruleset(policy),
-                "repos/tj-agents/core/rules/branches/main?per_page=100": rules(policy)}
-
-    def test_current_committed_policy_is_read_at_authoritative_sha_without_write(self):
-        gh = FakeGh(self.responses())
-        self.assertEqual("current", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-        self.assertFalse(any("PUT" in command or "POST" in command for command, _ in gh.calls))
-
-    def test_changed_bypass_is_repaired_even_when_effective_rules_look_current(self):
-        responses = self.responses()
-        responses["repos/tj-agents/core/rulesets/3"] = {**merge_policy.ruleset(HUMAN), "bypass_actors": []}
-        gh = FakeGh(responses)
-        self.assertEqual("updated", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-        self.assertEqual(1, sum("PUT" in command for command, _ in gh.calls))
-
-    def test_existing_updater_app_is_added_as_an_always_bypass_actor(self):
-        responses = self.responses()
-        responses["apps/tj-agents-pin-updater"] = {"id": 42}
-        gh = FakeGh(responses)
-        self.assertEqual("updated", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-        written = [json.loads(payload) for command, payload in gh.calls if "PUT" in command]
-        self.assertEqual(1, len(written))
-        self.assertIn({"actor_id": 42, "actor_type": "Integration", "bypass_mode": "always"}, written[0]["bypass_actors"])
-        responses["repos/tj-agents/core/rulesets/3"] = merge_policy.ruleset(HUMAN, updater_app=42)
-        gh = FakeGh(responses)
-        self.assertEqual("current", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-
-    def test_no_file_never_invents_a_gate(self):
-        responses = self.responses()
-        responses["repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40] = 404
-        gh = FakeGh(responses)
-        self.assertEqual("undeclared", merge_policy.reconcile("tj-agents/core", run=gh)["action"])
-        self.assertEqual(3, len(gh.calls))
-
-    def test_hinted_owner_outside_scope_never_reaches_github(self):
-        gh = mock.Mock()
-        with self.assertRaises(merge_policy.PolicyError):
-            merge_policy.reconcile("other/repo", run=gh)
-        gh.assert_not_called()
+def reconcile_responses(policy: dict[str, Any] = HUMAN) -> dict[str, Any]:
+    return {
+        "repos/tj-agents/core": {"default_branch": "main"},
+        "repos/tj-agents/core/commits/main": {"sha": "b" * 40},
+        "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40: {
+            "content": base64.b64encode(json.dumps(policy).encode()).decode()
+        },
+        "repos/tj-agents/core/rulesets?per_page=100": [
+            {"name": "merge-policy", "id": 3}
+        ],
+        "repos/tj-agents/core/rulesets/3": merge_policy.ruleset(policy),
+        "repos/tj-agents/core/rules/branches/main?per_page=100": rules(policy),
+    }
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_verified_default_branch_reports_categories_without_contents() -> None:
+    event = completed()
+    assert publish.hint(
+        event,
+        "octo/example",
+        ["plugins/a", ".github/merge-policy.json"],
+    ) == {
+        "v": 1,
+        "repo": "octo/example",
+        "sha": "b" * 40,
+        "changes": ["repository", "merge-policy", "marketplace"],
+    }
+    failure_cases: dict[str, list[Any]] = {
+        "status": ["in_progress"],
+        "conclusion": ["failure", "cancelled"],
+        "event": ["pull_request"],
+        "head_branch": ["feature"],
+        "head_repository": [{"full_name": "fork/example"}],
+    }
+    for field, values in failure_cases.items():
+        for value in values:
+            changed = {
+                **event,
+                "workflow_run": {**event["workflow_run"], field: value},
+            }
+            assert publish.hint(changed, "octo/example") is None
+    assert (
+        publish.hint(
+            {"ref": "refs/heads/main", "repository": {"default_branch": "main"}},
+            "octo/example",
+        )
+        is None
+    )
+
+
+def test_uses_actual_default_branch() -> None:
+    event = completed("openai/tools", "trunk")
+    assert publish.hint(event, "openai/tools") == {
+        "v": 1,
+        "repo": "openai/tools",
+        "sha": "b" * 40,
+        "changes": ["repository", "merge-policy", "marketplace"],
+    }
+
+
+def test_payload_never_uses_a_hinted_url_or_shell() -> None:
+    with pytest.raises(ValueError):
+        publish.hint({}, "evil/repository/extra")
+    opener = mock.MagicMock()
+    with pytest.raises(ValueError):
+        publish.publish("../../bad", {}, opener)
+    opener.assert_not_called()
+    message = publish.hint(
+        completed("any-owner/any-repository"),
+        "any-owner/any-repository",
+        ["private-token.txt"],
+    )
+    assert message is not None
+    assert "private-token" not in json.dumps(message)
+    publish.publish("a" * 48, message, opener)
+    request = opener.call_args.args[0]
+    assert request.full_url == "https://ntfy.sh/" + "a" * 48
+    assert json.loads(request.data) == message
+    assert opener.call_args.kwargs["timeout"] == 20
+
+
+def test_head_verification_blocks_stale_and_failed_runs() -> None:
+    event = completed("tj-agents/core")
+    opener = mock.MagicMock()
+    response = opener.return_value.__enter__.return_value
+    response.read.return_value = json.dumps(
+        {"sha": "b" * 40, "parents": [{"sha": "a" * 40}]}
+    ).encode()
+    revision = publish.verified_revision(event, "tj-agents/core", "token", opener)
+    assert revision == {"after": "b" * 40}
+    response.read.return_value = json.dumps({"sha": "c" * 40}).encode()
+    assert publish.verified_revision(event, "tj-agents/core", "token", opener) is None
+    opener.reset_mock()
+    event["workflow_run"]["conclusion"] = "failure"
+    assert publish.verified_revision(event, "tj-agents/core", "token", opener) is None
+    opener.assert_not_called()
+
+
+def test_unknown_push_range_includes_all_categories() -> None:
+    # The head may be regeneration or the last commit of a multi-commit push.
+    message = publish.hint(completed("tj-agents/core"), "tj-agents/core")
+    assert message is not None
+    assert message["changes"] == ["repository", "merge-policy", "marketplace"]
+
+
+def test_uniform_caller_waits_for_ci_and_has_read_only_permissions() -> None:
+    value = caller.render("a" * 40)
+    assert (
+        "uses: tj-agents/github-actions/.github/workflows/publish-update.yml@"
+        + "a" * 40
+        in value
+    )
+    assert "workflow_run:" in value
+    assert "workflows: [ci]" in value
+    assert "types: [completed]" in value
+    assert "contents: read" in value
+    assert "schedule:" not in value
+    assert "UPDATE_TOPIC: ${{ secrets.UPDATE_TOPIC }}" in value
+    assert "runs-on:" not in value
+    assert "steps:" not in value
+    with pytest.raises(ValueError):
+        caller.render("main")
+
+
+def test_canonical_workflows_guard_verified_origin_and_secret_contracts() -> None:
+    publisher = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
+    assert (
+        "workflow_call:\n    secrets:\n      UPDATE_TOPIC:\n        required: false"
+        in publisher
+    )
+    assert "github.event.workflow_run.conclusion == 'success'" in publisher
+    assert (
+        "github.event.workflow_run.head_repository.full_name == github.repository"
+        in publisher
+    )
+    assert re.search(
+        r"uses: tj-agents/github-actions/\.github/actions/publish-update@[0-9a-f]{40}",
+        publisher,
+    )
+    assert "actions/checkout" not in publisher
+    assert "UPDATE_APP_PRIVATE_KEY:\n        required: true" in updater
+    assert "permission-contents: write" in updater
+    assert "permission-pull-requests: write" in updater
+    assert "permission-workflows: write" in updater
+
+
+def test_current_committed_policy_is_read_at_authoritative_sha_without_write() -> None:
+    gh = FakeGh(reconcile_responses())
+    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "current"
+    assert not any("PUT" in command or "POST" in command for command, _ in gh.calls)
+
+
+def test_changed_bypass_is_repaired_even_when_effective_rules_look_current() -> None:
+    responses = reconcile_responses()
+    responses["repos/tj-agents/core/rulesets/3"] = {
+        **merge_policy.ruleset(HUMAN),
+        "bypass_actors": [],
+    }
+    gh = FakeGh(responses)
+    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "updated"
+    assert sum("PUT" in command for command, _ in gh.calls) == 1
+
+
+def test_no_file_never_invents_a_gate() -> None:
+    responses = reconcile_responses()
+    responses[
+        "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40
+    ] = 404
+    gh = FakeGh(responses)
+    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "undeclared"
+    assert len(gh.calls) == 3
+
+
+def test_hinted_owner_outside_scope_never_reaches_github() -> None:
+    gh = mock.Mock()
+    with pytest.raises(merge_policy.PolicyError):
+        merge_policy.reconcile("other/repo", run=gh)
+    gh.assert_not_called()
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r\n"])
+def test_scheduled_updates_regenerate_an_enrolled_caller(
+    tmp_path: Path, ending: str
+) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = (
+        caller.render("a" * 40)
+        .replace(
+            "  workflow_run:\n    workflows: [ci]\n    types: [completed]\n",
+            "  push:\n",
+        )
+        .replace("\n", ending)
+    )
+    path.write_bytes(before.encode())
+    summary = updater.update(
+        tmp_path,
+        ["tj-agents/github-actions"],
+        files=[".github/workflows/publish-update.yml"],
+        resolver=lambda _: "b" * 40,
+        comparer=lambda *_: None,
+        content_comparer=lambda *_: True,
+    )
+    assert summary["changed"]
+    assert path.read_bytes().decode() == caller.render("b" * 40).replace("\n", ending)
+
+
+def test_caller_regeneration_refuses_to_drop_custom_jobs(tmp_path: Path) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = caller.render("a" * 40) + "  custom:\n    runs-on: ubuntu-latest\n"
+    path.write_text(before, encoding="utf-8")
+    with pytest.raises(ValueError, match="custom publisher workflow"):
+        updater.update(
+            tmp_path,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/publish-update.yml"],
+            resolver=lambda _: "b" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+        )
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_unchanged_publisher_workflow_preserves_its_pin(tmp_path: Path) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = caller.render("a" * 40)
+    path.write_text(before, encoding="utf-8")
+    summary = updater.update(
+        tmp_path,
+        ["tj-agents/github-actions"],
+        files=[".github/workflows/publish-update.yml"],
+        resolver=lambda _: "b" * 40,
+        comparer=lambda *_: None,
+        content_comparer=lambda *_: False,
+    )
+    assert not summary["changed"]
+    assert path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("custom", ["condition", "secret"])
+def test_caller_regeneration_preserves_custom_publication_controls(
+    tmp_path: Path, custom: str
+) -> None:
+    path = tmp_path / ".github/workflows/publish-update.yml"
+    path.parent.mkdir(parents=True)
+    before = caller.render("a" * 40)
+    if custom == "condition":
+        before = before.replace("  publish:\n", "  publish:\n    if: false\n")
+    else:
+        before = before.replace("secrets.UPDATE_TOPIC", "secrets.CUSTOM_TOPIC")
+    path.write_text(before, encoding="utf-8")
+    with pytest.raises(ValueError, match="custom publisher workflow"):
+        updater.update(
+            tmp_path,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/publish-update.yml"],
+            resolver=lambda _: "b" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+        )
+    assert path.read_text(encoding="utf-8") == before
