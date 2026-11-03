@@ -23,6 +23,7 @@ SPEC.loader.exec_module(enrollment)
 OWNER = "tj-agents"
 APP_KEY = "-----BEGIN RSA PRIVATE KEY-----\nZm9v\n-----END RSA PRIVATE KEY-----\n"
 SHA = "a" * 40
+WORKFLOW = ROOT / ".github/workflows/enroll-publishers.yml"
 
 
 def repo_state(
@@ -33,7 +34,13 @@ def repo_state(
         "repository": repository if selected else "elsewhere/template",
     }
     return {
-        f"repos/{repository}": {"full_name": repository, "default_branch": branch},
+        f"repos/{repository}": {
+            "full_name": repository,
+            "owner": {"login": OWNER},
+            "default_branch": branch,
+            "fork": False,
+            "archived": False,
+        },
         f"repos/{repository}/commits/{branch}": {"sha": SHA},
         f"repos/{repository}/contents/.agents/plugins/template.json?ref={SHA}": {
             "content": base64.encodebytes(json.dumps(config).encode()).decode()
@@ -137,8 +144,9 @@ def gh_api(
 
 
 class FakeClient:
-    def __init__(self, fake: FakeGitHub):
+    def __init__(self, fake: FakeGitHub, custom: bool = False):
         self.fake = fake
+        self.custom = custom
 
     def api(
         self, path: str, method: str = "GET", body: dict[str, Any] | None = None
@@ -155,9 +163,21 @@ class FakeClient:
                 {"full_name": "someone/plugin", "owner": {"login": "someone"}},
             ]
         if path == "repos/tj-agents/plugin":
-            return {"default_branch": "main"}
+            return {
+                "full_name": "tj-agents/plugin",
+                "owner": {"login": OWNER},
+                "default_branch": "main",
+                "fork": False,
+                "archived": False,
+            }
         if path == "repos/tj-agents/other":
-            return {"default_branch": "trunk"}
+            return {
+                "full_name": "tj-agents/other",
+                "owner": {"login": OWNER},
+                "default_branch": "trunk",
+                "fork": False,
+                "archived": False,
+            }
         if path == "repos/tj-agents/plugin/commits/main":
             return {"sha": SHA}
         if path == "repos/tj-agents/other/commits/trunk":
@@ -187,6 +207,13 @@ class FakeClient:
                 "repository": repository if selected else "elsewhere/template",
             }
             return {"content": base64.encodebytes(json.dumps(config).encode()).decode()}
+        if (
+            path.endswith(f"/contents/{enrollment.DECLARATION}?ref={SHA}")
+            and self.custom
+        ):
+            repository = path.split("/contents/", 1)[0].removeprefix("repos/")
+            config = {"schema_version": 1, "repository": repository}
+            return {"content": base64.encodebytes(json.dumps(config).encode()).decode()}
         return self.fake.optional(path)
 
     def secret(
@@ -199,7 +226,7 @@ class FakeClient:
         self.fake.secret(repository, value, environment, secret)
 
 
-def test_enrolls_only_owned_nonfork_template_repositories_with_env_key() -> None:
+def test_enrolls_only_owned_nonfork_eligible_repositories_with_env_key() -> None:
     fake = FakeGitHub({})
     result = enrollment.enroll(
         FakeClient(fake), OWNER, 42, APP_KEY, apply=True, remove_legacy_secret=True
@@ -216,6 +243,15 @@ def test_enrolls_only_owned_nonfork_template_repositories_with_env_key() -> None
     )
     assert branch_write_index < secret_index
     assert fake.calls[branch_write_index][2] == {"name": "main", "type": "branch"}
+
+
+def test_enrolls_mixed_template_and_custom_declarations() -> None:
+    fake = FakeGitHub({})
+    result = enrollment.enroll(FakeClient(fake, custom=True), OWNER, 42, APP_KEY)
+    assert [item["repository"] for item in result] == [
+        "tj-agents/plugin",
+        "tj-agents/other",
+    ]
 
 
 def test_preview_does_not_require_a_key_or_write() -> None:
@@ -275,34 +311,100 @@ def test_enrollment_renders_and_reads_back_the_updater_bypass() -> None:
     assert review["parameters"]["required_approving_review_count"] == 1
 
 
-def test_template_marker_requires_schema_and_matching_target_repository() -> None:
+def test_eligibility_checks_declarations_against_one_verified_default_sha() -> None:
+    requests: list[str] = []
+
     class Content:
-        def __init__(self, config: dict[str, Any]):
-            self.config = config
+        def __init__(self, marker: dict[str, Any] | None, declaration: object | None):
+            self.marker = marker
+            self.declaration = declaration
 
         def api(
             self, path: str, method: str = "GET", body: dict[str, Any] | None = None
-        ) -> dict[str, str]:
+        ) -> dict[str, Any]:
+            if path == f"repos/{target}":
+                return {
+                    "full_name": target,
+                    "owner": {"login": OWNER},
+                    "default_branch": "main",
+                    "fork": False,
+                    "archived": False,
+                }
+            assert path == f"repos/{target}/commits/main"
             return {"sha": SHA}
 
-        def optional(self, path: str) -> dict[str, str]:
-            return {
-                "content": base64.encodebytes(json.dumps(self.config).encode()).decode()
-            }
+        def optional(self, path: str) -> dict[str, str] | None:
+            requests.append(path)
+            value = (
+                self.marker
+                if path == f"repos/{target}/contents/{enrollment.SOURCE}?ref={SHA}"
+                else self.declaration
+            )
+            if value is None:
+                return None
+            return {"content": base64.encodebytes(json.dumps(value).encode()).decode()}
 
     target = "tj-agents/plugin"
-    assert enrollment.template_repository(
-        Content({"schema_version": 1, "repository": target}), OWNER, target, "main"
-    )
-    assert not enrollment.template_repository(
-        Content({"schema_version": 1, "repository": "tj-agents/template"}),
+    assert enrollment.eligible_repository(
+        Content({"schema_version": 1, "repository": target}, None),
         OWNER,
         target,
         "main",
     )
-    assert not enrollment.template_repository(
-        Content({"schema_version": 2, "repository": target}), OWNER, target, "main"
+    assert enrollment.eligible_repository(
+        Content(
+            {"schema_version": 1, "repository": "elsewhere/template"},
+            {"schema_version": 1, "repository": target},
+        ),
+        OWNER,
+        target,
+        "main",
     )
+    assert not enrollment.eligible_repository(
+        Content(None, {"schema_version": 2, "repository": target}),
+        OWNER,
+        target,
+        "main",
+    )
+    assert all(path.endswith(f"?ref={SHA}") for path in requests)
+
+
+def test_matrix_output_contains_only_sorted_basename_json(tmp_path: Path) -> None:
+    output = tmp_path / "github-output"
+    enrollment.write_matrix_output(
+        output,
+        OWNER,
+        [
+            {"repository": "tj-agents/zeta"},
+            {"repository": "tj-agents/alpha"},
+            {"repository": "tj-agents/zeta"},
+        ],
+    )
+    assert output.read_text(encoding="utf-8") == 'repositories=["alpha","zeta"]\n'
+    with pytest.raises(enrollment.EnrollmentError, match="identity"):
+        enrollment.write_matrix_output(
+            output, OWNER, [{"repository": "someone/foreign"}]
+        )
+
+
+def test_central_workflow_separates_credentials_and_checks_exact_default_branch() -> (
+    None
+):
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "environment: update-enrollment" in source
+    assert "cancel-in-progress: false" in source
+    assert source.count("github.event.repository.default_branch") == 2
+    assert "permission-administration: write" in source
+    assert "permission-environments: write" in source
+    assert "permission-secrets: read" in source
+    assert "permission-workflows: write" in source
+    assert "secrets.ENROLLMENT_APP_PRIVATE_KEY" in source
+    assert "secrets.UPDATE_APP_PRIVATE_KEY" in source
+    assert "path: automation" in source and "path: consumer" in source
+    assert "repositories: ${{ matrix.name }}" in source
+    assert '--matrix-output "$GITHUB_OUTPUT"' in source
+    assert "persist-credentials: false" in source
+    assert "uses: ./automation/.github/actions/update-pins" in source
 
 
 def test_existing_environment_deployment_protection_is_preserved() -> None:
