@@ -62,6 +62,8 @@ def call(root: Path, source: str, **overrides: str) -> str:
     "value",
     [
         "",
+        ".",
+        "./",
         "../outside",
         ".git/config",
         "generated/*.txt",

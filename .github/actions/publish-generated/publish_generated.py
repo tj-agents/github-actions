@@ -28,6 +28,7 @@ def validate_paths(value: str) -> list[str]:
         parsed = PurePosixPath(path)
         if (
             not path
+            or parsed == PurePosixPath(".")
             or parsed.is_absolute()
             or ".." in parsed.parts
             or any(part.casefold() == ".git" for part in parsed.parts)
