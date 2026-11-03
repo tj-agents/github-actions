@@ -40,43 +40,41 @@ def load_policy(path):
 def validate_policy(policy, path):
     if not isinstance(policy, dict):
         raise PolicyError(f"{path} must contain a JSON object")
-    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
+    unknown = set(policy) - {"requires_approval", "required_checks", "review_check", "ci_pushes_default_branch"}
     if unknown:
         raise PolicyError(f"{path} has unknown keys: {', '.join(sorted(unknown))}")
-    if not isinstance(policy.get("agents_may_merge"), bool):
-        raise PolicyError(f"{path} must set agents_may_merge to true or false")
+    if not isinstance(policy.get("requires_approval"), bool):
+        raise PolicyError(f"{path} must set requires_approval to true or false")
     checks = policy.get("required_checks", [])
     if not isinstance(checks, list) or not all(isinstance(check, str) and check.strip() for check in checks):
         raise PolicyError("required_checks must be a list of check names")
     if not isinstance(policy.get("ci_pushes_default_branch", False), bool):
         raise PolicyError("ci_pushes_default_branch must be true or false")
     review = policy.get("review_check")
-    if policy["agents_may_merge"]:
+    if not policy["requires_approval"]:
         if review is not None and (not isinstance(review, str) or not review.strip()):
             raise PolicyError("review_check must name the automated review check that must pass")
     elif review is not None:
-        raise PolicyError("review_check applies only when agents_may_merge is true")
+        raise PolicyError("review_check applies only when requires_approval is false")
     return policy
 
 
 def required_contexts(policy):
     contexts = list(policy.get("required_checks", []))
-    if policy["agents_may_merge"] and policy.get("review_check"):
+    if not policy["requires_approval"] and policy.get("review_check"):
         contexts.append(policy["review_check"])
     return list(dict.fromkeys(contexts))
 
 
-def bypass_actors(policy, updater_app=None):
+def bypass_actors(policy):
     actors = [{"actor_id": ADMIN_ROLE_ID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]
     if policy.get("ci_pushes_default_branch"):
         actors.append({"actor_type": "DeployKey", "bypass_mode": "always"})
-    if updater_app is not None:
-        actors.append({"actor_id": updater_app, "actor_type": "Integration", "bypass_mode": "always"})
     return actors
 
 
-def ruleset(policy, updater_app=None):
-    human_review = not policy["agents_may_merge"]
+def ruleset(policy):
+    human_review = policy["requires_approval"]
     rules = [
         {"type": "deletion"},
         {"type": "non_fast_forward"},
@@ -99,7 +97,7 @@ def ruleset(policy, updater_app=None):
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "bypass_actors": bypass_actors(policy, updater_app),
+        "bypass_actors": bypass_actors(policy),
         "rules": rules,
     }
 
@@ -119,19 +117,6 @@ def gh(arguments, payload=None, run=subprocess.run):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
-def updater_app_slug(owner):
-    return f"{owner.lower()}-pin-updater"
-
-
-def updater_app_id(owner, run=subprocess.run):
-    try:
-        return gh([f"apps/{updater_app_slug(owner)}"], run=run)["id"]
-    except PolicyError as error:
-        if "HTTP 404" in str(error):
-            return None
-        raise
-
-
 def require_personal_owner(owner):
     if owner.lower() not in {"tj-agents", "concertable", "tomjseery"}:
         raise PolicyError("repository must belong to tj-agents, Concertable or tomjseery")
@@ -144,11 +129,9 @@ def require_personal_repository(repository):
         raise PolicyError("repository must be OWNER/NAME")
 
 
-def apply(repository, policy, dry_run=False, run=subprocess.run, updater_app=None):
+def apply(repository, policy, dry_run=False, run=subprocess.run):
     require_personal_repository(repository)
-    if updater_app is None:
-        updater_app = updater_app_id(repository.partition("/")[0], run=run)
-    desired = ruleset(policy, updater_app)
+    desired = ruleset(policy)
     existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) > 1:
@@ -179,12 +162,12 @@ def drift(policy, rules):
     if not reviews:
         problems.append("pull requests are not required")
     approvals = max((item.get("required_approving_review_count", 0) for item in reviews), default=0)
-    if policy["agents_may_merge"]:
-        if approvals:
-            problems.append(f"{approvals} approval(s) required, but agents may merge without one")
-    else:
+    if policy["requires_approval"]:
         if approvals < 1:
             problems.append("no approval is required")
+    else:
+        if approvals:
+            problems.append(f"{approvals} approval(s) required, but none should be")
     if reviews and any(item.get("require_last_push_approval") for item in reviews):
         problems.append("approval of the most recent push is required")
     if reviews and any(item.get("dismiss_stale_reviews_on_push") for item in reviews):
@@ -241,15 +224,14 @@ def reconcile(repository, run=subprocess.run):
     policy = repository_policy(repository, run=run, ref=head)
     if policy is None:
         return {"repository": repository, "action": "undeclared", "revision": head}
-    updater_app = updater_app_id(repository.partition("/")[0], run=run)
-    desired = ruleset(policy, updater_app)
+    desired = ruleset(policy)
     existing = [item for item in gh([f"repos/{repository}/rulesets?per_page=100"], run=run) or []
                 if item.get("name") == RULESET_NAME and item.get("source_type", "Repository") == "Repository"]
     if len(existing) == 1:
         actual = gh([f"repos/{repository}/rulesets/{existing[0]['id']}"], run=run)
         if matches_owned(actual, desired):
             return {"repository": repository, "action": "current", "revision": head}
-    action = apply(repository, policy, run=run, updater_app=updater_app)["action"]
+    action = apply(repository, policy, run=run)["action"]
     problems = check(repository, policy, quote(branch, safe=""), run=run)
     if problems:
         raise PolicyError(f"{repository}: {'; '.join(problems)}")
