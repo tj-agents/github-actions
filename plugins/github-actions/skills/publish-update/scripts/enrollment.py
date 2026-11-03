@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enroll Template plugin repositories in protected updater publication.
 
-Requires Python 3.9+ and the GitHub CLI.
+Requires Python 3.12+, the locked project environment and the GitHub CLI.
 """
 
 import argparse
