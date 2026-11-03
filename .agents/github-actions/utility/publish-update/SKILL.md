@@ -62,10 +62,11 @@ An organization owner bootstraps publication once from this skill directory:
 
 ```text
 python -B scripts/owner_setup.py --owner tj-agents
-python -B scripts/owner_setup.py --owner tj-agents --apply
+uv run --locked --script scripts/owner_setup.py --owner tj-agents --apply
 ```
 
-Preview is offline. Apply requires the owner's own GitHub sign-in and refuses agent sessions and token
+Preview is offline. Apply's locked environment supplies its cryptographic verifier on Windows and Linux.
+It requires the owner's own GitHub sign-in and refuses agent sessions and token
 overrides. It configures `<owner>-pin-updater` for contents, pull requests and workflows write, plus a
 separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and
 environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
@@ -74,8 +75,11 @@ environment. Only the updater key reaches consumer `update-pins` environments.
 Enrollment selects same-owner, non-fork, non-archived repositories whose default-branch
 `.agents/plugins/template.json` names that repository. It verifies exact branch restrictions before
 uploading a key, preserves additional deployment protections, and reconciles each declared merge policy
-with the verified updater App bypass. Bootstrap removes legacy unprotected updater secrets only after
-replacement metadata is read back. Key values never appear in diagnostics or local enrollment state.
+with the verified updater App bypass. Each supplied key authenticates as its intended App before upload.
+Bootstrap removes legacy unprotected updater secrets after replacements are read back and before new
+bypass grants. An organization-wide exposure requires the owner to revoke previously distributed keys
+and supply a fresh one; deleting a secret cannot revoke a copied key. Key values never appear in
+diagnostics or local enrollment state.
 
 Trusted central automation uses `scripts/enrollment.py` to enroll future repositories through the same
 implementation. Its apply path requires the central repository's current default branch and a controller

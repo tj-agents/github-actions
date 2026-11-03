@@ -12,10 +12,13 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 sys.dont_write_bytecode = True
 
@@ -25,13 +28,75 @@ VARIABLE = "UPDATE_APP_CLIENT_ID"
 SOURCE = ".agents/plugins/template.json"
 BRANCH_VARIABLE = "TJ_AGENTS_UPDATE_PINS_BRANCH"
 TIMEOUT = 90
-NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+if sys.platform == "win32":
+    NO_WINDOW = subprocess.CREATE_NO_WINDOW
+else:
+    NO_WINDOW = 0
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,200}")
 
 
 class EnrollmentError(Exception):
     pass
+
+
+def verify_app_key(
+    owner: str,
+    app_id: int,
+    client_id: str,
+    key: str,
+    opener: Callable[..., Any] = urlopen,
+    clock: Callable[[], float] = time.time,
+) -> None:
+    """Authenticate the in-memory PEM as its intended App before distributing it."""
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    except ImportError as error:
+        raise EnrollmentError(
+            "Use the locked uv environment for App key validation"
+        ) from error
+
+    def encode(value: bytes) -> bytes:
+        return base64.urlsafe_b64encode(value).rstrip(b"=")
+
+    try:
+        private_key = serialization.load_pem_private_key(key.encode(), password=None)
+        if not isinstance(private_key, rsa.RSAPrivateKey):
+            raise ValueError("GitHub App keys must use RSA")
+        now = int(clock())
+        claims = {"iat": now - 60, "exp": now + 300, "iss": client_id}
+        message = b".".join(
+            (
+                encode(b'{"alg":"RS256","typ":"JWT"}'),
+                encode(json.dumps(claims).encode()),
+            )
+        )
+        signature = private_key.sign(message, padding.PKCS1v15(), hashes.SHA256())
+        token = (message + b"." + encode(signature)).decode("ascii")
+        request = Request(
+            "https://api.github.com/app",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        with opener(request, timeout=TIMEOUT) as response:
+            actual = json.loads(response.read(1024 * 1024))
+        if (
+            not isinstance(actual, dict)
+            or actual.get("id") != app_id
+            or actual.get("client_id") != client_id
+            or (actual.get("owner") or {}).get("login", "").casefold()
+            != owner.casefold()
+        ):
+            raise ValueError("App identity mismatch")
+    except (ValueError, TypeError, URLError) as error:
+        raise EnrollmentError(
+            f"The supplied key cannot authenticate as App {app_id}; "
+            "no key was distributed"
+        ) from error
 
 
 class GitHub:
@@ -153,6 +218,7 @@ def protected(
     apply: bool,
     environment: str = ENVIRONMENT,
     branch_variable: str = BRANCH_VARIABLE,
+    allow_exposed: bool = False,
 ) -> dict[str, Any]:
     if (
         not BRANCH.fullmatch(branch)
@@ -175,8 +241,19 @@ def protected(
             f"{repository}/{environment} has an invalid ownership marker"
         )
     if current:
-        policy = current.get("deployment_branch_policy") or {}
-        if (
+        policy = current.get("deployment_branch_policy")
+        if policy is None:
+            # GitHub creates an empty environment when CI first references its name.
+            secrets = list(pages(gh, environment_path + "/secrets"))
+            if secrets and (
+                not allow_exposed or any(item.get("name") != SECRET for item in secrets)
+            ):
+                raise EnrollmentError(
+                    f"{repository}/{environment} already exposes secrets; "
+                    "owner credential rotation is required before enrollment"
+                )
+            policy = {"protected_branches": False, "custom_branch_policies": True}
+        elif (
             policy.get("protected_branches") is not False
             or policy.get("custom_branch_policies") is not True
         ):
@@ -192,13 +269,11 @@ def protected(
         raise EnrollmentError(
             f"{repository}/{environment} has duplicate deployment branch policies"
         )
-    if branch in names and marker_branch != branch:
-        existing_branch = next(item for item in existing if item.get("name") == branch)
-        if existing_branch.get("type") != "branch":
-            raise EnrollmentError(
-                f"{repository}/{environment} has an unowned exact-name policy; "
-                "refusing to assume it is a branch"
-            )
+    if any(item.get("type") != "branch" for item in existing):
+        raise EnrollmentError(
+            f"{repository}/{environment} must use exact branch policies; "
+            "tags and unspecified policy types are refused"
+        )
     extras = [item for item in existing if item.get("name") != branch]
     if extras and (
         marker_branch is None
@@ -236,6 +311,9 @@ def protected(
                 protection_body["prevent_self_review"] = rule.get(
                     "prevent_self_review", False
                 )
+            elif kind == "branch_policy":
+                # A read-only projection of deployment_branch_policy, not an input.
+                continue
             else:
                 raise EnrollmentError(
                     f"{repository}/{environment} has an unsupported protection rule"
@@ -255,8 +333,12 @@ def protected(
         gh.api(f"{policies_path}/{item['id']}", "DELETE")
     if branch not in names:
         gh.api(policies_path, "POST", {"name": branch, "type": "branch"})
-    actual_names = [item.get("name") for item in pages(gh, policies_path)]
-    if actual_names != [branch]:
+    actual_branches = list(pages(gh, policies_path))
+    if (
+        len(actual_branches) != 1
+        or actual_branches[0].get("name") != branch
+        or actual_branches[0].get("type") != "branch"
+    ):
         raise EnrollmentError(
             f"{repository}/{environment} exact branch restriction read-back failed"
         )
@@ -352,6 +434,28 @@ def has_repository_secret(gh: Any, repository: str, name: str) -> bool:
     )
 
 
+def legacy_key_locations(gh: Any, owner: str) -> list[str]:
+    """Inventory exposed publisher keys without retrieving any secret value."""
+    exposed = []
+    for repository in inventory(gh, owner):
+        branch = gh.api(f"repos/{repository}").get("default_branch")
+        if not isinstance(branch, str) or not template_repository(
+            gh, owner, repository, branch
+        ):
+            continue
+        if has_repository_secret(gh, repository, SECRET):
+            exposed.append(repository)
+        path = f"repos/{repository}/environments/{ENVIRONMENT}"
+        environment = gh.optional(path)
+        if (
+            environment
+            and environment.get("deployment_branch_policy") is None
+            and any(item.get("name") == SECRET for item in pages(gh, path + "/secrets"))
+        ):
+            exposed.append(repository + "/" + ENVIRONMENT)
+    return exposed
+
+
 def reconcile_policy(gh: Any, repository: str, app_id: int) -> str:
     """Render the declared policy with the enrolled updater, using trusted code only."""
     branch = gh.api(f"repos/{repository}")["default_branch"]
@@ -406,6 +510,8 @@ def enroll(
     updater_key: str,
     apply: bool = False,
     remove_legacy_secret: bool = False,
+    grant_bypass: bool = True,
+    allow_exposed: bool = False,
 ) -> list[dict[str, Any]]:
     if (
         not OWNER.fullmatch(owner)
@@ -425,7 +531,7 @@ def enroll(
             raise EnrollmentError(f"{repository} has no default branch")
         if not template_repository(gh, owner, repository, branch):
             continue
-        result = protected(gh, repository, branch, apply)
+        result = protected(gh, repository, branch, apply, allow_exposed=allow_exposed)
         result["app_id"] = updater_app_id
         results.append(result)
         if apply:
@@ -451,7 +557,11 @@ def enroll(
                         f"{repository} repository-level {SECRET} removal "
                         "read-back failed"
                     )
-            result["merge_policy"] = reconcile_policy(gh, repository, updater_app_id)
+    if apply and grant_bypass:
+        for result in results:
+            result["merge_policy"] = reconcile_policy(
+                gh, result["repository"], updater_app_id
+            )
     return results
 
 
@@ -537,6 +647,13 @@ def main(
         if arguments.apply and not key:
             raise EnrollmentError(
                 "the central protected environment did not provide UPDATER_PRIVATE_KEY"
+            )
+        if arguments.apply:
+            verify_app_key(
+                arguments.owner,
+                arguments.updater_app_id,
+                arguments.updater_client_id,
+                key or "",
             )
         results = enroll(
             GitHub(run),
