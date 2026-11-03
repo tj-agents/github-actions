@@ -657,6 +657,7 @@ def setup(
             True,
             environment,
             variable,
+            allow_exposed=legacy_rotation and environment == "update-pins",
         )
     set_repo_variable(gh, central, CONTROLLER_VARIABLE, controller["client_id"])
     set_repo_variable(gh, central, "ENROLLMENT_APP_ID", str(controller["id"]))
