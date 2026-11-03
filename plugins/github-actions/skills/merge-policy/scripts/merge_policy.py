@@ -40,28 +40,28 @@ def load_policy(path):
 def validate_policy(policy, path):
     if not isinstance(policy, dict):
         raise PolicyError(f"{path} must contain a JSON object")
-    unknown = set(policy) - {"agents_may_merge", "required_checks", "review_check", "ci_pushes_default_branch"}
+    unknown = set(policy) - {"requires_approval", "required_checks", "review_check", "ci_pushes_default_branch"}
     if unknown:
         raise PolicyError(f"{path} has unknown keys: {', '.join(sorted(unknown))}")
-    if not isinstance(policy.get("agents_may_merge"), bool):
-        raise PolicyError(f"{path} must set agents_may_merge to true or false")
+    if not isinstance(policy.get("requires_approval"), bool):
+        raise PolicyError(f"{path} must set requires_approval to true or false")
     checks = policy.get("required_checks", [])
     if not isinstance(checks, list) or not all(isinstance(check, str) and check.strip() for check in checks):
         raise PolicyError("required_checks must be a list of check names")
     if not isinstance(policy.get("ci_pushes_default_branch", False), bool):
         raise PolicyError("ci_pushes_default_branch must be true or false")
     review = policy.get("review_check")
-    if policy["agents_may_merge"]:
+    if not policy["requires_approval"]:
         if review is not None and (not isinstance(review, str) or not review.strip()):
             raise PolicyError("review_check must name the automated review check that must pass")
     elif review is not None:
-        raise PolicyError("review_check applies only when agents_may_merge is true")
+        raise PolicyError("review_check applies only when requires_approval is false")
     return policy
 
 
 def required_contexts(policy):
     contexts = list(policy.get("required_checks", []))
-    if policy["agents_may_merge"] and policy.get("review_check"):
+    if not policy["requires_approval"] and policy.get("review_check"):
         contexts.append(policy["review_check"])
     return list(dict.fromkeys(contexts))
 
@@ -74,7 +74,7 @@ def bypass_actors(policy):
 
 
 def ruleset(policy):
-    human_review = not policy["agents_may_merge"]
+    human_review = policy["requires_approval"]
     rules = [
         {"type": "deletion"},
         {"type": "non_fast_forward"},
@@ -162,12 +162,12 @@ def drift(policy, rules):
     if not reviews:
         problems.append("pull requests are not required")
     approvals = max((item.get("required_approving_review_count", 0) for item in reviews), default=0)
-    if policy["agents_may_merge"]:
-        if approvals:
-            problems.append(f"{approvals} approval(s) required, but agents may merge without one")
-    else:
+    if policy["requires_approval"]:
         if approvals < 1:
             problems.append("no approval is required")
+    else:
+        if approvals:
+            problems.append(f"{approvals} approval(s) required, but none should be")
     if reviews and any(item.get("require_last_push_approval") for item in reviews):
         problems.append("approval of the most recent push is required")
     if reviews and any(item.get("dismiss_stale_reviews_on_push") for item in reviews):

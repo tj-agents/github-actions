@@ -12,8 +12,8 @@ SPEC = importlib.util.spec_from_file_location("merge_policy", SCRIPT)
 merge_policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merge_policy)
 
-HUMAN = {"agents_may_merge": False, "required_checks": ["ci-required"]}
-AGENTS = {"agents_may_merge": True, "required_checks": ["ci-required"], "review_check": "agent-review"}
+HUMAN = {"requires_approval": True, "required_checks": ["ci-required"]}
+AGENTS = {"requires_approval": False, "required_checks": ["ci-required"], "review_check": "agent-review"}
 
 
 class FakeGh:
@@ -43,10 +43,10 @@ class PolicyTests(unittest.TestCase):
         return path
 
     def test_invalid_policies_are_refused(self):
-        for value in ({}, {"agents_may_merge": "yes"}, {"agents_may_merge": True, "review_check": ""},
-                      {"agents_may_merge": False, "review_check": "agent-review"},
-                      {"agents_may_merge": False, "required_checks": [""]},
-                      {"agents_may_merge": False, "extra": 1}):
+        for value in ({}, {"requires_approval": "yes"}, {"requires_approval": False, "review_check": ""},
+                      {"requires_approval": True, "review_check": "agent-review"},
+                      {"requires_approval": True, "required_checks": [""]},
+                      {"requires_approval": True, "extra": 1}):
             with self.subTest(value=value), self.assertRaises(merge_policy.PolicyError):
                 merge_policy.load_policy(self.write(value))
 
@@ -151,7 +151,7 @@ class CheckTests(unittest.TestCase):
 
     def test_policy_and_rules_disagreeing_on_who_merges_is_drift(self):
         self.assertIn("no approval is required", self.check(HUMAN, rules(AGENTS)))
-        self.assertTrue(any("agents may merge" in problem for problem in self.check(AGENTS, rules(HUMAN))))
+        self.assertTrue(any("but none should be" in problem for problem in self.check(AGENTS, rules(HUMAN))))
 
     def test_policies_reject_rules_that_invalidate_earlier_approvals(self):
         for policy in (HUMAN, AGENTS):
@@ -167,16 +167,16 @@ class CheckTests(unittest.TestCase):
 
     def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
         import base64
-        ci = {"agents_may_merge": False, "ci_pushes_default_branch": True}
+        ci = {"requires_approval": True, "ci_pushes_default_branch": True}
         encoded = base64.b64encode(json.dumps(ci).encode()).decode()
         responses = {
             "users/tj-agents/repos?type=owner&per_page=100&page=1": [
                 {"full_name": "tj-agents/new"}, {"full_name": "tj-agents/core"}, {"full_name": "tj-agents/done"},
                 {"full_name": "tj-agents/secret", "private": True}, {"full_name": "tj-agents/copy", "fork": True}],
             "repos/tj-agents/new/contents/.github/merge-policy.json": 404,
-            "repos/tj-agents/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"agents_may_merge": false}').decode()},
+            "repos/tj-agents/done/contents/.github/merge-policy.json": {"content": base64.b64encode(b'{"requires_approval": true}').decode()},
             "repos/tj-agents/core/contents/.github/merge-policy.json": {"content": encoded},
-            "repos/tj-agents/done/rules/branches/main?per_page=100": rules({"agents_may_merge": False}),
+            "repos/tj-agents/done/rules/branches/main?per_page=100": rules({"requires_approval": True}),
             "repos/tj-agents/new/rulesets?per_page=100": [],
             "repos/tj-agents/core/rulesets?per_page=100": [],
         }
