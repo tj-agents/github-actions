@@ -44,6 +44,10 @@ PR Tommy pushed himself needs an approval from someone else. The bot account mus
 admin: that, not this script, stops an agent from merging past the policy or applying a ruleset.
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
+Protected updater enrollment may add its verified App as an always-bypass actor for generated publication.
+The [publication setup](../publish-update/SKILL.md) owns eligibility and credentials. Merely finding an App
+with a conventional name grants no bypass.
+
 ## Commands
 
 Run from this skill directory, with `python` on Windows and `python3` on Linux/macOS. The `gh` CLI must
