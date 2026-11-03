@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["cryptography==50.0.2"]
+# ///
 """Configure the protected publisher and enrollment GitHub Apps once.
 
 Requires Python 3.9+ and the GitHub CLI.
@@ -23,6 +27,7 @@ import sys
 import time
 import webbrowser
 from collections.abc import Callable, Mapping
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -43,13 +48,26 @@ CENTRAL_BRANCH_VARIABLE = "TJ_AGENTS_ENROLLMENT_BRANCH"
 GH_TIMEOUT_SECONDS = 90
 WAIT_SECONDS = 300
 POLL_SECONDS = 5
-NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+if sys.platform == "win32":
+    NO_WINDOW = subprocess.CREATE_NO_WINDOW
+else:
+    NO_WINDOW = 0
 OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 PEM = re.compile(
     r"-----BEGIN (?:RSA )?PRIVATE KEY-----\r?\n"
     r"[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PRIVATE KEY-----\s*"
 )
 ENROLLMENT = Path(__file__).resolve().with_name("enrollment.py")
+
+
+@lru_cache(maxsize=1)
+def load_enrollment() -> Any:
+    spec = importlib.util.spec_from_file_location("owner_enrollment", ENROLLMENT)
+    if spec is None or spec.loader is None:
+        raise SetupError("could not load trusted enrollment helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class SetupError(Exception):
@@ -223,6 +241,9 @@ def discover(gh: GitHub, owner: str) -> dict[str, Any]:
         ),
         "variable": gh.optional(f"orgs/{owner}/actions/variables/{VARIABLE}"),
         "legacy_org_secret": gh.optional(f"orgs/{owner}/actions/secrets/{SECRET}"),
+        "legacy_repositories": load_enrollment().legacy_key_locations(
+            load_enrollment().GitHub(gh.run), owner
+        ),
         "rulesets": rulesets,
     }
 
@@ -552,7 +573,6 @@ def setup(
     owner: str,
     gh: GitHub,
     key: str | None = None,
-    rotate: bool = False,
     open_url: Callable[[str], Any] = webbrowser.open,
     prompt: Callable[[str], str] = input,
     sleep: Callable[[float], None] = time.sleep,
@@ -560,6 +580,28 @@ def setup(
     controller_key: str | None = None,
 ) -> None:
     state = discover(gh, owner)
+    legacy_rotation = state["legacy_org_secret"] is not None or bool(
+        state.get("legacy_repositories")
+    )
+    if legacy_rotation:
+        url = (
+            f"https://github.com/organizations/{owner}/settings/apps/"
+            f"{state['slug']}#private-key"
+        )
+        print(
+            "An unprotected publisher key was exposed to repository branches. "
+            "Revoke previously distributed publisher keys on GitHub and supply a "
+            "fresh key; removing the secret alone does not revoke copied keys.",
+            flush=True,
+        )
+        open_url(url)
+        if (
+            prompt("Type the updater App slug after revoking old keys: ").strip()
+            != state["slug"]
+        ):
+            raise SetupError(
+                "owner key-rotation confirmation is required before migration"
+            )
     updater_slug, enroll_slug = state["slug"], state["controller_slug"]
     updater_created = None
     enroll_created = None
@@ -581,6 +623,11 @@ def setup(
     controller_key = app_key(
         owner, enroll_slug, controller_key, enroll_created, open_url, prompt
     )
+    enrollment = load_enrollment()
+    enrollment.verify_app_key(owner, updater["id"], updater["client_id"], updater_key)
+    enrollment.verify_app_key(
+        owner, controller["id"], controller["client_id"], controller_key
+    )
     ensure_installation(
         gh, owner, updater_slug, updater["id"], PERMISSIONS, open_url, sleep, clock
     )
@@ -599,11 +646,6 @@ def setup(
     central_branch = gh.api(f"repos/{central}").get("default_branch")
     if not isinstance(central_branch, str) or not central_branch:
         raise SetupError(f"{central} has no default branch")
-    spec = importlib.util.spec_from_file_location("enrollment", ENROLLMENT)
-    if spec is None or spec.loader is None:
-        raise SetupError("could not load trusted enrollment helper")
-    enrollment = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(enrollment)
     for environment, variable in (
         ("update-pins", "TJ_AGENTS_UPDATE_PINS_BRANCH"),
         (CENTRAL_ENVIRONMENT, CENTRAL_BRANCH_VARIABLE),
@@ -618,6 +660,7 @@ def setup(
         )
     set_repo_variable(gh, central, CONTROLLER_VARIABLE, controller["client_id"])
     set_repo_variable(gh, central, "ENROLLMENT_APP_ID", str(controller["id"]))
+    set_repo_variable(gh, central, "UPDATE_APP_ID", str(updater["id"]))
     put_env_secret(gh, central, CENTRAL_ENVIRONMENT, SECRET, updater_key)
     put_env_secret(
         gh, central, CENTRAL_ENVIRONMENT, "ENROLLMENT_APP_PRIVATE_KEY", controller_key
@@ -629,6 +672,8 @@ def setup(
         updater_key,
         apply=True,
         remove_legacy_secret=True,
+        grant_bypass=False,
+        allow_exposed=legacy_rotation,
     )
     if state["legacy_org_secret"] is not None:
         gh.remove_org_secret(owner, SECRET)
@@ -637,6 +682,10 @@ def setup(
                 f"exposed organization secret {SECRET} removal read-back failed"
             )
     covered = ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
+    for result in results:
+        result["merge_policy"] = enrollment.reconcile_policy(
+            enrollment.GitHub(gh.run), result["repository"], updater["id"]
+        )
     print(
         f"Owner setup complete: {len(results)} Template repositories enrolled; "
         f"org rulesets {covered}",
@@ -688,6 +737,7 @@ def main(
     parser.add_argument("--updater-key-file", type=Path)
     parser.add_argument("--enrollment-key-file", type=Path)
     arguments = parser.parse_args(argv)
+    enrollment = load_enrollment()
     try:
         if not OWNER.fullmatch(arguments.owner):
             raise SetupError("--owner must be a GitHub organization login")
@@ -724,7 +774,7 @@ def main(
             open_url=webbrowser.open,
             controller_key=enrollment_key,
         )
-    except SetupError as error:
+    except (SetupError, enrollment.EnrollmentError) as error:
         print(f"owner_setup: {error}", file=sys.stderr)
         return 1
     return 0

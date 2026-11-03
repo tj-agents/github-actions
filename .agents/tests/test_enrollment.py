@@ -1,11 +1,17 @@
 import base64
 import importlib.util
+import io
 import json
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".agents/github-actions/utility/publish-update/scripts/enrollment.py"
@@ -319,7 +325,9 @@ def test_existing_environment_deployment_protection_is_preserved() -> None:
                 },
                 "protection_rules": protection,
             },
-            policy_path: {"branch_policies": [{"id": 1, "name": "main"}]},
+            policy_path: {
+                "branch_policies": [{"id": 1, "name": "main", "type": "branch"}]
+            },
             environment + "/variables/TJ_AGENTS_UPDATE_PINS_BRANCH": {"value": "main"},
         }
     )
@@ -493,3 +501,103 @@ def test_paginated_inventory_reads_every_repository() -> None:
     assert len(repositories) == 101
     assert "type=all&per_page=100&page=1" in fake.paths[0]
     assert "type=all&per_page=100&page=2" in fake.paths[1]
+
+
+def test_real_environment_branch_rule_is_accepted_on_repeat() -> None:
+    fake = FakeGitHub({})
+    target = "tj-agents/plugin"
+    enrollment.protected(fake, target, "main", apply=True)
+    environment_path = f"repos/{target}/environments/update-pins"
+    fake.state[environment_path]["protection_rules"] = [{"type": "branch_policy"}]
+    enrollment.protected(fake, target, "main", apply=True)
+    assert fake.state[environment_path]["deployment_branch_policy"] == {
+        "protected_branches": False,
+        "custom_branch_policies": True,
+    }
+
+
+def test_auto_created_empty_environment_is_safely_tightened() -> None:
+    target = "tj-agents/plugin"
+    path = f"repos/{target}/environments/update-pins"
+    fake = FakeGitHub(
+        {path: {"deployment_branch_policy": None, "protection_rules": []}}
+    )
+    enrollment.protected(fake, target, "main", apply=True)
+    assert (
+        fake.state[path]["deployment_branch_policy"]["custom_branch_policies"] is True
+    )
+    assert not fake.env_secrets
+
+
+def test_owner_marker_does_not_authorize_a_tag_rule() -> None:
+    target = "tj-agents/plugin"
+    path = f"repos/{target}/environments/update-pins"
+    fake = FakeGitHub(
+        {
+            path: {
+                "deployment_branch_policy": {
+                    "protected_branches": False,
+                    "custom_branch_policies": True,
+                }
+            },
+            path + "/deployment-branch-policies": [
+                {"id": 1, "name": "main", "type": "tag"}
+            ],
+            path + "/variables/TJ_AGENTS_UPDATE_PINS_BRANCH": {"value": "main"},
+        }
+    )
+    with pytest.raises(enrollment.EnrollmentError, match="exact branch policies"):
+        enrollment.protected(fake, target, "main", apply=True)
+    assert all(method == "GET" for method, _, _ in fake.calls)
+
+
+def test_key_is_cryptographically_bound_to_the_intended_app() -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    seen: list[Request] = []
+
+    def opener(request: Request, *, timeout: int) -> io.BytesIO:
+        seen.append(request)
+        assert request.full_url == "https://api.github.com/app"
+        assert timeout == enrollment.TIMEOUT
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        header, payload, signature = token.split(".")
+        private_key.public_key().verify(
+            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)),
+            (header + "." + payload).encode(),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        claims = json.loads(
+            base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        )
+        assert claims == {"iat": 940, "exp": 1300, "iss": "Iv1.updater"}
+        return io.BytesIO(
+            json.dumps(
+                {"id": 42, "client_id": "Iv1.updater", "owner": {"login": OWNER}}
+            ).encode()
+        )
+
+    enrollment.verify_app_key(OWNER, 42, "Iv1.updater", pem, opener, lambda: 1000)
+    assert len(seen) == 1
+    wrong = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    wrong_pem = wrong.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+
+    def rejecting(request: Request, *, timeout: int) -> io.BytesIO:
+        try:
+            return opener(request, timeout=timeout)
+        except InvalidSignature as error:
+            raise URLError("Bad credentials") from error
+
+    with pytest.raises(enrollment.EnrollmentError, match="no key was distributed"):
+        enrollment.verify_app_key(
+            OWNER, 42, "Iv1.updater", wrong_pem, rejecting, lambda: 1000
+        )
