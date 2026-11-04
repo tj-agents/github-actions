@@ -12,7 +12,7 @@ organization owner in their own terminal, it creates or finds
 `<owner>-pin-updater` and `<owner>-enrollment-controller`. Their keys are stored
 as environment secrets restricted to the exact default branch. The updater key
 is copied only to the `update-pins` environments of same-owner repositories
-that select Template.
+that explicitly select updater publication.
 """
 
 import argparse
@@ -688,7 +688,7 @@ def setup(
             enrollment.GitHub(gh.run), result["repository"], updater["id"]
         )
     print(
-        f"Owner setup complete: {len(results)} Template repositories enrolled; "
+        f"Owner setup complete: {len(results)} eligible repositories enrolled; "
         f"org rulesets {covered}",
         flush=True,
     )
@@ -714,14 +714,14 @@ def preview(owner: str) -> None:
     )
     print(
         "- copy only the updater key to update-pins on repositories whose default "
-        "branch selects Template"
+        "branch selects Template or declares custom publication eligibility"
     )
     print(
         f"- store the enrollment key only in {owner}/github-actions/update-enrollment"
     )
     print(
         "- add the updater as an org-ruleset bypass; repository bypasses apply "
-        "only to enrolled Template repos"
+        "only to enrolled repositories"
     )
     print("Nothing is written until --apply is supplied.")
 

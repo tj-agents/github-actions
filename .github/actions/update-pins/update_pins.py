@@ -100,8 +100,20 @@ def tracked_files(project, run=command):
 
 
 def read_file(root, relative):
+    if not relative.startswith(".github/"):
+        raise ValueError("unsafe tracked file")
+    return _read_project_file(root, relative)
+
+
+def read_declaration(root, relative):
+    if relative not in {".agents/plugins/template.json", ".github/update-enrollment.json"}:
+        raise ValueError("unsafe enrollment declaration")
+    return _read_project_file(root, relative)
+
+
+def _read_project_file(root, relative):
     path = PurePosixPath(relative)
-    if path.is_absolute() or ".." in path.parts or not relative.startswith(".github/"):
+    if path.is_absolute() or ".." in path.parts:
         raise ValueError("unsafe tracked file")
     target = root.joinpath(*path.parts)
     current = root
@@ -233,10 +245,122 @@ def generated_publisher(path: Path, content: str, revisions: dict[str, str]) -> 
     return rendered.replace("\n", "\r\n") if "\r\n" in content else rendered
 
 
-def update(project, repositories, check=False, files=None, resolver=resolve_repository, comparer=compare_revisions, content_comparer=compare_contents):
+def _caller_module():
+    source = (Path(__file__).resolve().parents[3]
+              / ".agents/github-actions/utility/publish-update/scripts/caller.py")
+    spec = importlib.util.spec_from_file_location("publisher_caller", source)
+    if spec is None or spec.loader is None:
+        raise ValueError("trusted publisher caller generator is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TEMPLATE_CI = re.compile(
+    r"\Aname: ci\n\non:\n  push:\n    branches: \[main\]\n"
+    r"  pull_request:\n\njobs:\n  verify:\n"
+    r"    uses: tj-agents/template/\.github/workflows/plugin-ci\.yml@"
+    r"(?P<revision>main|[0-9a-f]{40})\n    with:\n"
+    r"      template_ref: (?P=revision)\n"
+    r"(?P<secrets>    secrets:\n(?:      (?:read_token: \$\{\{ secrets\.TJ_AGENTS_READ_TOKEN \}\}|"
+    r"UPDATE_APP_PRIVATE_KEY: \$\{\{ secrets\.UPDATE_APP_PRIVATE_KEY \}\})\n)+)?\Z"
+)
+def migrate_template_ci(content):
+    normalized = content.replace("\r\n", "\n")
+    match = TEMPLATE_CI.fullmatch(normalized)
+    if match is None:
+        if "tj-agents/template/.github/workflows/plugin-ci.yml@" in normalized:
+            raise ValueError("custom Template CI caller requires review before bootstrap")
+        return content
+    secret_lines = (match.group("secrets") or "").splitlines()
+    updater_secret = "      UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}"
+    if updater_secret not in secret_lines:
+        if secret_lines:
+            migrated = normalized.replace(
+                match.group("secrets"), match.group("secrets") + updater_secret + "\n", 1
+            )
+        else:
+            migrated = normalized + "    secrets:\n" + updater_secret + "\n"
+    else:
+        migrated = normalized
+    return migrated.replace("\n", "\r\n") if "\r\n" in content else migrated
+
+
+def migrate_updater_caller(content, revision, repositories):
+    module = _caller_module()
+    normalized = content.replace("\r\n", "\n")
+    uses = re.search(
+        r"(?m)^    uses: tj-agents/github-actions/\.github/workflows/update-pins\.yml@([0-9a-f]{40})$",
+        normalized,
+    )
+    if uses is None:
+        raise ValueError("custom update-pins workflow requires review before bootstrap")
+    repositories_match = re.search(r"(?m)^      repositories: ([^\n]+)$", normalized)
+    if repositories_match is None:
+        raise ValueError("custom update-pins workflow requires review before bootstrap")
+    allowlist = parse_repositories(repositories_match.group(1))
+    original_repositories = ",".join(allowlist)
+    previous = module.render_updater(uses.group(1), original_repositories)
+    legacy = previous.replace(
+        "    secrets:\n      UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}\n", ""
+    )
+    if normalized not in {previous, legacy}:
+        raise ValueError("custom update-pins workflow requires review before bootstrap")
+    updated = module.render_updater(revision, original_repositories)
+    return updated.replace("\n", "\r\n") if "\r\n" in content else updated
+
+
+def validate_repository_identity(root, repository):
+    if not REPOSITORY.fullmatch(repository):
+        raise ValueError("invalid target consumer repository")
+    found = False
+    for relative in (
+        ".agents/plugins/template.json",
+        ".github/update-enrollment.json",
+    ):
+        path = root / relative
+        if not path.exists():
+            continue
+        found = True
+        try:
+            _, text = read_declaration(root, relative)
+            declaration = json.loads(text)
+        except (OSError, ValueError) as error:
+            raise ValueError("consumer enrollment declaration is invalid") from error
+        if (
+            not isinstance(declaration, dict)
+            or type(declaration.get("schema_version")) is not int
+            or declaration.get("schema_version") != 1
+            or not isinstance(declaration.get("repository"), str)
+            or declaration["repository"].casefold() != repository.casefold()
+            or (
+                relative == ".github/update-enrollment.json"
+                and set(declaration) != {"schema_version", "repository"}
+            )
+        ):
+            raise ValueError("consumer enrollment declaration does not match target repository")
+    if not found:
+        raise ValueError("consumer has no matching enrollment declaration")
+
+
+def update(
+    project,
+    repositories,
+    check=False,
+    files=None,
+    resolver=resolve_repository,
+    comparer=compare_revisions,
+    content_comparer=compare_contents,
+    bootstrap_callers=False,
+    target_repository=None,
+):
     root = Path(project).resolve()
     if not root.is_dir():
         raise ValueError("project is not a directory")
+    if bootstrap_callers:
+        if not target_repository:
+            raise ValueError("bootstrap requires an explicit target repository")
+        validate_repository_identity(root, target_repository)
     documents = [read_file(root, relative) for relative in (tracked_files(root) if files is None else files)]
     revisions = {repository.lower(): resolver(repository) for repository in repositories}
     comparisons = set()
@@ -248,13 +372,50 @@ def update(project, repositories, check=False, files=None, resolver=resolve_repo
     for repository, subpath, before, after in sorted(comparisons):
         if content_comparer(repository, subpath, before, after):
             replacements[(repository, subpath, before)] = after
-    proposals = [(path, content, generated_publisher(path, replace_references(content, replacements), revisions))
-                 for path, content in documents]
+    proposals = [
+        (
+            path,
+            content,
+            generated_publisher(
+                path, replace_references(content, replacements), revisions
+            ),
+        )
+        for path, content in documents
+    ]
+    if bootstrap_callers:
+        revision = revisions.get("tj-agents/github-actions")
+        if revision is None:
+            raise ValueError("bootstrap requires tj-agents/github-actions in the pin allowlist")
+        proposed_paths = {path.resolve() for path, _, _ in proposals}
+        for index, (path, original, content) in enumerate(proposals):
+            if path.name == "ci.yml":
+                updated = migrate_template_ci(content)
+                if updated != content:
+                    proposals[index] = (path, original, updated)
+        updater_path = root / ".github/workflows/update-pins.yml"
+        if target_repository and target_repository.casefold() == "tj-agents/github-actions":
+            # This repository owns the canonical workflow called by consumers.
+            pass
+        elif updater_path.resolve() in proposed_paths:
+            for index, (path, original, content) in enumerate(proposals):
+                if path.resolve() == updater_path.resolve():
+                    updated = migrate_updater_caller(
+                        content, revision, ",".join(repositories)
+                    )
+                    proposals[index] = (path, original, updated)
+                    break
+        elif updater_path.exists():
+            raise ValueError("untracked update-pins workflow requires review before bootstrap")
+        else:
+            module = _caller_module()
+            generated = module.render_updater(revision, ",".join(repositories))
+            proposals.append((updater_path, "", generated))
     changed = [(path, updated) for path, original, updated in proposals if updated != original]
     if changed and not check:
         for path, content in changed:
-            if os.path.islink(path):
+            if os.path.islink(path) or os.path.islink(path.parent):
                 raise ValueError("unsafe tracked file")
+            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(content)
     return {"changed": bool(changed), "files": len(changed), "repositories": repositories[:20]}
@@ -273,9 +434,17 @@ def main(arguments=None):
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--repositories", required=True)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--bootstrap-callers", action="store_true")
+    parser.add_argument("--repository")
     values = parser.parse_args(arguments)
     try:
-        summary = update(values.project, parse_repositories(values.repositories), values.check)
+        summary = update(
+            values.project,
+            parse_repositories(values.repositories),
+            values.check,
+            bootstrap_callers=values.bootstrap_callers,
+            target_repository=values.repository,
+        )
     except ValueError as error:
         print("error: " + str(error))
         return 1
