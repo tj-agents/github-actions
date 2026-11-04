@@ -462,24 +462,130 @@ def test_invalid_app_key_aborts_owner_setup_before_any_remote_write(
     gh.set_secret.assert_not_called()
 
 
+@pytest.fixture
+def legacy_state() -> dict[str, Any]:
+    return {
+        "legacy_org_secret": {"name": owner_setup.SECRET},
+        "legacy_repositories": ["tj-agents/first", "tj-agents/second/update-pins"],
+        "slug": "tj-agents-pin-updater",
+        "app": {
+            "slug": "tj-agents-pin-updater",
+            "id": 42,
+            "client_id": "Iv1.updater",
+            "owner": {"login": "tj-agents"},
+            "permissions": owner_setup.PERMISSIONS,
+        },
+        "variable": {"value": "Iv1.updater"},
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid", ["missing_app", "wrong_owner", "permissions", "client_id"]
+)
+def test_legacy_identity_is_checked_before_opening_any_key_settings(
+    invalid: str, legacy_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if invalid == "missing_app":
+        legacy_state["app"] = None
+    elif invalid == "wrong_owner":
+        legacy_state["app"]["owner"] = {"login": "someone-else"}
+    elif invalid == "permissions":
+        legacy_state["app"]["permissions"] = {"contents": "read"}
+    else:
+        legacy_state["variable"]["value"] = "Iv1.unrelated-bot"
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
+    gh, browser, prompt = mock.Mock(), mock.Mock(), mock.Mock()
+    with pytest.raises(owner_setup.SetupError):
+        owner_setup.setup("tj-agents", gh, open_url=browser, prompt=prompt)
+    browser.assert_not_called()
+    prompt.assert_not_called()
+    gh.assert_not_called()
+    gh.api.assert_not_called()
+    gh.set_secret.assert_not_called()
+
+
+def test_legacy_metadata_does_not_establish_key_ownership(
+    legacy_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
+    browser, prompt = mock.Mock(), mock.Mock(return_value="tj-agents-pin-updater")
+    with pytest.raises(owner_setup.SetupError, match="ownership confirmation"):
+        owner_setup.setup("tj-agents", mock.Mock(), open_url=browser, prompt=prompt)
+    browser.assert_not_called()
+    assert "EVERY listed location" in prompt.call_args.args[0]
+    assert "App ID 42" in prompt.call_args.args[0]
+
+
+def test_rotation_action_is_readable_at_each_prompt_without_console_relay(
+    legacy_state: dict[str, Any], tmp_path: Path
+) -> None:
+    result_file = tmp_path / "result.json"
+    reporter = owner_setup.SetupReporter("tj-agents", result_file)
+    browser = mock.Mock()
+    observed = []
+
+    def respond(message: str) -> str:
+        receipt = json.loads(result_file.read_text(encoding="utf-8"))
+        observed.append(receipt)
+        if len(observed) == 1:
+            browser.assert_not_called()
+            return "credentials belong to tj-agents-pin-updater"
+        browser.assert_called_once_with(receipt["action"]["url"])
+        return "revoked tj-agents-pin-updater"
+
+    owner_setup.confirm_legacy_rotation(
+        "tj-agents",
+        legacy_state,
+        browser,
+        respond,
+        reporter.progress,
+        reporter.awaiting,
+    )
+    assert [item["action"]["kind"] for item in observed] == [
+        "identify_legacy_app",
+        "rotate_updater_keys",
+    ]
+    for item in observed:
+        assert item["state"] == "running"
+        assert len(item["action"]["locations"]) == 3
+        assert "App ID 42" in json.dumps(item["action"])
+        assert "Iv1.updater" in json.dumps(item["action"])
+    reporter.finish(1, "owner stopped")
+    assert (
+        json.loads(result_file.read_text(encoding="utf-8"))["action"]
+        == observed[-1]["action"]
+    )
+    reporter.progress("Verifying new key")
+    assert "action" not in json.loads(result_file.read_text(encoding="utf-8"))
+
+
 def test_legacy_exposure_requires_owner_key_revocation_before_migration(
+    legacy_state: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        owner_setup,
-        "discover",
-        lambda *_: {
-            "legacy_org_secret": {"name": owner_setup.SECRET},
-            "slug": "tj-agents-pin-updater",
-        },
-    )
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
     gh = mock.Mock()
+    responses = iter(["credentials belong to tj-agents-pin-updater", "not confirmed"])
     with pytest.raises(owner_setup.SetupError, match="key-rotation confirmation"):
         owner_setup.setup(
-            "tj-agents", gh, open_url=lambda _: None, prompt=lambda _: "not confirmed"
+            "tj-agents", gh, open_url=lambda _: None, prompt=lambda _: next(responses)
         )
     gh.api.assert_not_called()
     gh.set_secret.assert_not_called()
+
+
+def test_legacy_rotation_refuses_a_key_selected_before_revocation(
+    legacy_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
+    browser, prompt, gh = mock.Mock(), mock.Mock(), mock.Mock()
+    with pytest.raises(owner_setup.SetupError, match="omit --updater-key-file"):
+        owner_setup.setup(
+            "tj-agents", gh, key="old-key", open_url=browser, prompt=prompt
+        )
+    browser.assert_not_called()
+    prompt.assert_not_called()
+    gh.api.assert_not_called()
 
 
 def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
@@ -504,7 +610,7 @@ def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
         "controller_slug": owner + "-enrollment-controller",
         "app": updater,
         "controller": controller,
-        "variable": None,
+        "variable": {"value": "Iv1.updater"},
     }
     monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
     monkeypatch.setattr(owner_setup, "app_key", lambda *_: "unused-test-key")
@@ -526,9 +632,12 @@ def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
     monkeypatch.setattr(owner_setup, "load_enrollment", lambda: bridge)
     gh = mock.Mock()
     gh.api.return_value = {"default_branch": "main"}
+    responses = iter(
+        ["credentials belong to tj-agents-pin-updater", "revoked tj-agents-pin-updater"]
+    )
     with pytest.raises(StopAfterProtectionError):
         owner_setup.setup(
-            owner, gh, open_url=lambda _: None, prompt=lambda _: owner + "-pin-updater"
+            owner, gh, open_url=lambda _: None, prompt=lambda _: next(responses)
         )
     assert observed == [("update-pins", True), ("update-enrollment", False)]
     gh.set_secret.assert_not_called()
