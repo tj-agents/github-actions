@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Bootstrap caller pull requests after enrollment
+        type: boolean
+        default: true
   push:
 
 permissions:
@@ -68,6 +73,7 @@ jobs:
     if: >-
       needs.enroll.outputs.repositories != '[]'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name != 'workflow_dispatch' || inputs.bootstrap)
     environment: update-enrollment
     runs-on: ubuntu-latest
     timeout-minutes: 20
