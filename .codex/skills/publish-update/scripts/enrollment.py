@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enroll Template plugin repositories in protected updater publication.
+"""Enroll explicitly eligible repositories in protected updater publication.
 
 Requires Python 3.12+, the locked project environment and the GitHub CLI.
 """
@@ -26,6 +26,7 @@ ENVIRONMENT = "update-pins"
 SECRET = "UPDATE_APP_PRIVATE_KEY"
 VARIABLE = "UPDATE_APP_CLIENT_ID"
 SOURCE = ".agents/plugins/template.json"
+DECLARATION = ".github/update-enrollment.json"
 BRANCH_VARIABLE = "TJ_AGENTS_UPDATE_PINS_BRANCH"
 TIMEOUT = 90
 if sys.platform == "win32":
@@ -390,27 +391,59 @@ def protected(
     }
 
 
-def template_repository(gh: Any, owner: str, repository: str, branch: str) -> bool:
+def _read_json_content(gh: Any, repository: str, path: str, head: str) -> Any | None:
+    content = gh.optional(f"repos/{repository}/contents/{path}?ref={head}")
+    if content is None:
+        return None
+    try:
+        encoded = b"".join(content["content"].encode("ascii").split())
+        return json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
+    except (KeyError, TypeError, ValueError) as error:
+        raise EnrollmentError(f"{repository} has invalid {path}") from error
+
+
+def eligible_repository(
+    gh: Any,
+    owner: str,
+    repository: str,
+    branch: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """Check both enrollment declarations at one verified default-branch SHA."""
+    actual = metadata or gh.api(f"repos/{repository}")
+    full_name = actual.get("full_name")
+    actual_owner = actual.get("owner")
+    if (
+        not isinstance(full_name, str)
+        or full_name.casefold() != repository.casefold()
+        or not isinstance(actual_owner, dict)
+        or not isinstance(actual_owner.get("login"), str)
+        or actual_owner["login"].casefold() != owner.casefold()
+        or actual.get("fork")
+        or actual.get("archived")
+        or actual.get("default_branch") != branch
+    ):
+        return False
     head = gh.api(f"repos/{repository}/commits/{quote(branch, safe='')}").get("sha")
     if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
         raise EnrollmentError(f"{repository} default branch has no verified commit")
-    path = f"repos/{repository}/contents/{SOURCE}?ref={head}"
-    content = gh.optional(path)
-    if content is None:
-        return False
-    try:
-        encoded = b"".join(content["content"].encode("ascii").split())
-        config = json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
-    except (KeyError, TypeError, ValueError) as error:
-        raise EnrollmentError(
-            f"{repository} has invalid .agents/plugins/{SOURCE}"
-        ) from error
-    return (
-        isinstance(config, dict)
-        and config.get("schema_version") == 1
-        and isinstance(config.get("repository"), str)
-        and config["repository"].casefold() == repository.casefold()
+    template = _read_json_content(gh, repository, SOURCE, head)
+    declaration = _read_json_content(gh, repository, DECLARATION, head)
+    selected_template = (
+        isinstance(template, dict)
+        and type(template.get("schema_version")) is int
+        and template.get("schema_version") == 1
+        and isinstance(template.get("repository"), str)
+        and template["repository"].casefold() == full_name.casefold()
     )
+    selected_custom = (
+        isinstance(declaration, dict)
+        and set(declaration) == {"schema_version", "repository"}
+        and type(declaration.get("schema_version")) is int
+        and declaration.get("schema_version") == 1
+        and declaration.get("repository") == full_name
+    )
+    return selected_template or selected_custom
 
 
 def inventory(gh: Any, owner: str) -> Iterator[str]:
@@ -439,7 +472,7 @@ def legacy_key_locations(gh: Any, owner: str) -> list[str]:
     exposed = []
     for repository in inventory(gh, owner):
         branch = gh.api(f"repos/{repository}").get("default_branch")
-        if not isinstance(branch, str) or not template_repository(
+        if not isinstance(branch, str) or not eligible_repository(
             gh, owner, repository, branch
         ):
             continue
@@ -529,7 +562,7 @@ def enroll(
         branch = metadata.get("default_branch")
         if not isinstance(branch, str) or not branch:
             raise EnrollmentError(f"{repository} has no default branch")
-        if not template_repository(gh, owner, repository, branch):
+        if not eligible_repository(gh, owner, repository, branch, metadata):
             continue
         result = protected(gh, repository, branch, apply, allow_exposed=allow_exposed)
         result["app_id"] = updater_app_id
@@ -619,6 +652,28 @@ def automation_guard(
         )
 
 
+def write_matrix_output(path: Path, owner: str, results: list[dict[str, Any]]) -> None:
+    names = []
+    for result in results:
+        repository = result.get("repository")
+        if (
+            not isinstance(repository, str)
+            or repository.count("/") != 1
+            or repository.split("/", 1)[0].casefold() != owner.casefold()
+            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository.split("/", 1)[1])
+        ):
+            raise EnrollmentError(
+                "eligible repository identity cannot be written to the matrix"
+            )
+        names.append(repository.split("/", 1)[1])
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            "repositories="
+            + json.dumps(sorted(set(names)), separators=(",", ":"))
+            + "\n"
+        )
+
+
 def main(
     argv: list[str] | None = None,
     environment: Mapping[str, str] = os.environ,
@@ -630,6 +685,7 @@ def main(
     parser.add_argument("--updater-client-id", required=True)
     parser.add_argument("--updater-app-id", required=True, type=int)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--matrix-output", type=Path)
     arguments = parser.parse_args(argv)
     try:
         if not OWNER.fullmatch(arguments.owner):
@@ -662,11 +718,13 @@ def main(
             key or "preview",
             arguments.apply,
         )
+        if arguments.matrix_output:
+            write_matrix_output(arguments.matrix_output, arguments.owner, results)
         for result in results:
             print(json.dumps(result, sort_keys=True))
         print(
-            f"{len(results)} Template repositories "
-            f"{'enrolled' if arguments.apply else 'eligible'}"
+            f"{len(results)} eligible repositories "
+            f"{'enrolled' if arguments.apply else 'selected'}"
         )
     except EnrollmentError as error:
         print(f"enrollment: {error}", file=sys.stderr)

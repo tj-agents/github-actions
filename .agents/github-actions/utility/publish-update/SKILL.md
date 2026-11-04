@@ -72,19 +72,32 @@ separate `<owner>-enrollment-controller` for contents and secret metadata read, 
 environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
 environment. Only the updater key reaches consumer `update-pins` environments.
 
-Enrollment selects same-owner, non-fork, non-archived repositories whose default-branch
-`.agents/plugins/template.json` names that repository. It verifies exact branch restrictions before
-uploading a key, preserves additional deployment protections, and reconciles each declared merge policy
-with the verified updater App bypass. Each supplied key authenticates as its intended App before upload.
+Enrollment selects same-owner, non-fork, non-archived repositories whose default branch either has a
+matching `.agents/plugins/template.json` or declares custom generated-file publication in
+`.github/update-enrollment.json`. A custom publisher owns generation and opts in with this exact file:
+
+```json
+{
+  "schema_version": 1,
+  "repository": "tj-agents/core"
+}
+```
+
+The central workflow checks both declarations at the same verified default-branch commit. It verifies exact
+branch restrictions before uploading a key, preserves additional deployment protections, and reconciles
+each declared merge policy with the verified updater App bypass. Each supplied key authenticates as its
+intended App before upload.
 Bootstrap removes legacy unprotected updater secrets after replacements are read back and before new
 bypass grants. An organization-wide exposure requires the owner to revoke previously distributed keys
 and supply a fresh one; deleting a secret cannot revoke a copied key. Key values never appear in
 diagnostics or local enrollment state.
 
-Trusted central automation uses `scripts/enrollment.py` to enroll future repositories through the same
-implementation. Its apply path requires the central repository's current default branch and a controller
-installation token. First token minting, post-merge publication and installed startup still require actual
-rollout verification; successful source checks do not establish them.
+Trusted central automation uses `scripts/enrollment.py` to enroll repositories and open a caller-bootstrap
+pull request through the same implementation. It checks only the central default branch, uses separate
+controller and repository-scoped updater tokens, and never executes consumer code. Its apply path requires
+the central repository's current default branch and a controller installation token. First token minting,
+post-merge publication and installed startup still require actual rollout verification; successful source
+checks do not establish them.
 
 For an existing fleet, `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>`
 prepares each repository caller without cloning repositories. Preparation writes caller files for review;

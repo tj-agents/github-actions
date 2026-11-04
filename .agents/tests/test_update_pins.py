@@ -19,6 +19,19 @@ def load(name, path):
 
 updater = load("update_pins", ACTION)
 caller = load("caller", CALLER)
+TEMPLATE_CI = """name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    uses: tj-agents/template/.github/workflows/plugin-ci.yml@main
+    with:
+      template_ref: main
+"""
 
 
 class UpdatePinsTests(unittest.TestCase):
@@ -27,6 +40,9 @@ class UpdatePinsTests(unittest.TestCase):
         self.project = Path(self.temporary.name)
         self.workflows = self.project / ".github/workflows"
         self.workflows.mkdir(parents=True)
+        marker = self.project / ".agents/plugins/template.json"
+        marker.parent.mkdir(parents=True)
+        marker.write_text('{"schema_version":1,"repository":"tj-agents/plugin","type":"utility"}\n', encoding="utf-8")
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -35,6 +51,181 @@ class UpdatePinsTests(unittest.TestCase):
         path = self.workflows / name
         path.write_text(content, encoding="utf-8", newline="")
         return path
+
+    def test_template_marker_bootstrap_renders_valid_complete_caller(self):
+        ci = self.write("ci.yml", TEMPLATE_CI)
+        updater.update(
+            self.project, ["tj-agents/github-actions"], files=[".github/workflows/ci.yml"],
+            resolver=lambda _: "b" * 40, bootstrap_callers=True,
+            target_repository="tj-agents/plugin",
+        )
+        expected = TEMPLATE_CI + "    secrets:\n      UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}\n"
+        self.assertEqual(expected, ci.read_text(encoding="utf-8"))
+        self.assertEqual(expected, updater.migrate_template_ci(expected))
+
+    def test_bootstrap_refuses_removed_declaration_before_any_lookup_or_write(self):
+        (self.project / ".agents/plugins/template.json").unlink()
+        ci = self.write("ci.yml", TEMPLATE_CI)
+        resolver = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "no matching enrollment declaration"):
+            updater.update(
+                self.project, ["tj-agents/github-actions"], files=[".github/workflows/ci.yml"],
+                resolver=resolver, bootstrap_callers=True, target_repository="tj-agents/plugin",
+            )
+        resolver.assert_not_called()
+        self.assertEqual(TEMPLATE_CI, ci.read_text(encoding="utf-8"))
+
+    def test_declaration_reader_is_bounded_without_broadening_tracked_file_reader(self):
+        with self.assertRaisesRegex(ValueError, "unsafe tracked file"):
+            updater.read_file(self.project, ".agents/plugins/template.json")
+        with self.assertRaisesRegex(ValueError, "unsafe enrollment declaration"):
+            updater.read_declaration(self.project, ".agents/private.json")
+
+    def test_bootstrap_adds_template_secret_and_updater_caller_idempotently(self):
+        ci = self.write(
+            "ci.yml",
+            """name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    uses: tj-agents/template/.github/workflows/plugin-ci.yml@main
+    with:
+      template_ref: main
+    secrets:
+      read_token: ${{ secrets.TJ_AGENTS_READ_TOKEN }}
+""",
+        )
+        declaration = self.project / ".github/update-enrollment.json"
+        declaration.write_text(
+            '{"schema_version":1,"repository":"tj-agents/plugin"}\n',
+            encoding="utf-8",
+        )
+        resolver = lambda _: "b" * 40
+        updater.update(
+            self.project,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/ci.yml"],
+            resolver=resolver,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+            bootstrap_callers=True,
+            target_repository="tj-agents/plugin",
+        )
+        self.assertIn("secrets.TJ_AGENTS_READ_TOKEN", ci.read_text(encoding="utf-8"))
+        self.assertIn("UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}", ci.read_text(encoding="utf-8"))
+        updater_path = self.workflows / "update-pins.yml"
+        expected = caller.render_updater("b" * 40, "tj-agents/github-actions")
+        self.assertEqual(expected, updater_path.read_text(encoding="utf-8"))
+        before = {path: path.read_bytes() for path in (ci, updater_path)}
+        summary = updater.update(
+            self.project,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/ci.yml", ".github/workflows/update-pins.yml"],
+            resolver=resolver,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+            bootstrap_callers=True,
+            target_repository="tj-agents/plugin",
+        )
+        self.assertFalse(summary["changed"])
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_bootstrap_migrates_exact_legacy_updater_caller_and_preserves_crlf(self):
+        path = self.write(
+            "update-pins.yml",
+            caller.render_updater("a" * 40, "neutral/actions,tj-agents/github-actions")
+            .replace(
+                "    secrets:\n      UPDATE_APP_PRIVATE_KEY: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}\n",
+                "",
+            )
+            .replace("\n", "\r\n"),
+        )
+        updater.update(
+            self.project,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/update-pins.yml"],
+            resolver=lambda _: "b" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+            bootstrap_callers=True,
+            target_repository="tj-agents/plugin",
+        )
+        self.assertEqual(
+            caller.render_updater("b" * 40, "neutral/actions,tj-agents/github-actions")
+            .replace("\n", "\r\n"),
+            path.read_bytes().decode("utf-8"),
+        )
+
+    def test_unknown_bootstrap_caller_refuses_all_proposed_changes(self):
+        pins = self.write("actions.yml", "uses: tj-agents/github-actions@" + "a" * 40 + "\n")
+        updater_workflow = self.write(
+            "update-pins.yml",
+            caller.render_updater("a" * 40, "tj-agents/github-actions")
+            + "  custom:\n    runs-on: ubuntu-latest\n",
+        )
+        before = {path: path.read_bytes() for path in (pins, updater_workflow)}
+        with self.assertRaisesRegex(ValueError, "custom update-pins"):
+            updater.update(
+                self.project,
+                ["tj-agents/github-actions"],
+                files=[".github/workflows/actions.yml", ".github/workflows/update-pins.yml"],
+                resolver=lambda _: "b" * 40,
+                comparer=lambda *_: None,
+                content_comparer=lambda *_: True,
+                bootstrap_callers=True,
+                target_repository="tj-agents/plugin",
+            )
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_custom_template_caller_refuses_update_without_partial_pin_write(self):
+        pins = self.write("actions.yml", "uses: tj-agents/github-actions@" + "a" * 40 + "\n")
+        ci = self.write(
+            "ci.yml",
+            TEMPLATE_CI + "  custom:\n    runs-on: ubuntu-latest\n",
+        )
+        before = {path: path.read_bytes() for path in (pins, ci)}
+        with self.assertRaisesRegex(ValueError, "custom Template CI"):
+            updater.update(
+                self.project,
+                ["tj-agents/github-actions"],
+                files=[".github/workflows/actions.yml", ".github/workflows/ci.yml"],
+                resolver=lambda _: "b" * 40,
+                comparer=lambda *_: None,
+                content_comparer=lambda *_: True,
+                bootstrap_callers=True,
+                target_repository="tj-agents/plugin",
+            )
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_central_repository_preserves_its_canonical_updater_workflow(self):
+        (self.project / ".agents/plugins/template.json").write_text(
+            '{"schema_version":1,"repository":"tj-agents/github-actions"}\n', encoding="utf-8")
+        updater_path = self.write(
+            "update-pins.yml",
+            "name: Update shared action pins\njobs:\n  update:\n    runs-on: ubuntu-latest\n",
+        )
+        ci = self.write(
+            "ci.yml",
+            TEMPLATE_CI,
+        )
+        original = updater_path.read_bytes()
+        updater.update(
+            self.project,
+            ["tj-agents/github-actions"],
+            files=[".github/workflows/ci.yml", ".github/workflows/update-pins.yml"],
+            resolver=lambda _: "b" * 40,
+            comparer=lambda *_: None,
+            content_comparer=lambda *_: True,
+            bootstrap_callers=True,
+            target_repository="tj-agents/github-actions",
+        )
+        self.assertEqual(original, updater_path.read_bytes())
+        self.assertIn("UPDATE_APP_PRIVATE_KEY", ci.read_text(encoding="utf-8"))
 
     def test_updates_arbitrary_configured_owner_and_preserves_nested_quoted_references(self):
         path = self.write("ci.yml", """steps:
