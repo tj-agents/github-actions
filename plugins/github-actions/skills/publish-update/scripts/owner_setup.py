@@ -27,6 +27,8 @@ import sys
 import time
 import webbrowser
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
+from enum import StrEnum
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -72,6 +74,78 @@ def load_enrollment() -> Any:
 
 class SetupError(Exception):
     pass
+
+
+class SetupState(StrEnum):
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+def safe_diagnostic(message: str) -> str:
+    message = re.sub(
+        r"app-manifests/[^/\s]+/conversions",
+        "app-manifests/[redacted]/conversions",
+        message,
+    )
+    message = re.sub(
+        r"-----BEGIN (?:RSA )?PRIVATE KEY-----.*?-----END (?:RSA )?PRIVATE KEY-----",
+        "[redacted private key]",
+        message,
+        flags=re.DOTALL,
+    )
+    message = re.sub(
+        r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b",
+        "[redacted token]",
+        message,
+    )
+    return re.sub(r"Bearer\s+\S+", "Bearer [redacted]", message)[:1000]
+
+
+def print_progress(message: str) -> None:
+    print(message, flush=True)
+
+
+class SetupReporter:
+    def __init__(self, owner: str, result_file: Path | None) -> None:
+        self.owner = owner
+        self.result_file = result_file
+        self.phase = "Starting owner setup"
+
+    def progress(self, message: str) -> None:
+        self.phase = message
+        self._write(SetupState.RUNNING, None)
+        print_progress(message)
+
+    def finish(self, exit_code: int, error: str | None = None) -> None:
+        self._write(
+            SetupState.COMPLETE if exit_code == 0 else SetupState.FAILED,
+            exit_code,
+            error,
+        )
+
+    def _write(
+        self, state: SetupState, exit_code: int | None, error: str | None = None
+    ) -> None:
+        if self.result_file is None:
+            return
+        result = {
+            "schema_version": 1,
+            "owner": self.owner,
+            "pid": os.getpid(),
+            "state": state.value,
+            "phase": self.phase,
+            "exit_code": exit_code,
+            "observed_at": datetime.now(UTC).isoformat(),
+        }
+        if error is not None:
+            result["error"] = safe_diagnostic(error)
+        self.result_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.result_file.with_name(
+            f".{self.result_file.name}.{os.getpid()}.tmp"
+        )
+        temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(self.result_file)
 
 
 class GitHub:
@@ -237,7 +311,10 @@ def bypasses(ruleset: Mapping[str, Any], app_id: int) -> bool:
     )
 
 
-def discover(gh: GitHub, owner: str) -> dict[str, Any]:
+def discover(
+    gh: GitHub, owner: str, progress: Callable[[str], None] = print_progress
+) -> dict[str, Any]:
+    progress(f"Checking the signed-in owner's membership in {owner}")
     login = gh.api("user")["login"]
     membership = gh.optional(f"user/memberships/orgs/{owner}")
     if (
@@ -246,6 +323,7 @@ def discover(gh: GitHub, owner: str) -> dict[str, Any]:
         or membership.get("state") != "active"
     ):
         raise SetupError(f"{login} is not an active owner of {owner}")
+    progress("Checking existing App installations and organization capabilities")
     installations, page = [], 1
     while True:
         batch = gh.api(f"orgs/{owner}/installations?per_page=100&page={page}").get(
@@ -257,6 +335,7 @@ def discover(gh: GitHub, owner: str) -> dict[str, Any]:
         page += 1
     rulesets = gh.organization_rulesets(owner)
     updater, controller = app_slug(owner), controller_slug(owner)
+    progress("Checking existing Apps, updater configuration and exposed key locations")
     return {
         "login": login,
         "org_id": gh.api(f"orgs/{owner}")["id"],
@@ -273,7 +352,7 @@ def discover(gh: GitHub, owner: str) -> dict[str, Any]:
         "variable": gh.optional(f"orgs/{owner}/actions/variables/{VARIABLE}"),
         "legacy_org_secret": gh.optional(f"orgs/{owner}/actions/secrets/{SECRET}"),
         "legacy_repositories": load_enrollment().legacy_key_locations(
-            load_enrollment().GitHub(gh.run), owner
+            load_enrollment().GitHub(gh.run), owner, progress=progress
         ),
         "rulesets": rulesets,
     }
@@ -609,12 +688,14 @@ def setup(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     controller_key: str | None = None,
+    progress: Callable[[str], None] = print_progress,
 ) -> None:
-    state = discover(gh, owner)
+    state = discover(gh, owner, progress)
     legacy_rotation = state["legacy_org_secret"] is not None or bool(
         state.get("legacy_repositories")
     )
     if legacy_rotation:
+        progress("Waiting for the owner to revoke exposed updater keys")
         url = (
             f"https://github.com/organizations/{owner}/settings/apps/"
             f"{state['slug']}#private-key"
@@ -639,17 +720,20 @@ def setup(
     updater = state["app"]
     controller = state["controller"]
     if updater is None:
+        progress(f"Waiting for creation of {updater_slug} in the browser")
         updater_created = create_app(
             gh, owner, updater_slug, PERMISSIONS, open_url, clock
         )
         updater = gh.api(f"apps/{updater_slug}")
     if controller is None:
+        progress(f"Waiting for creation of {enroll_slug} in the browser")
         enroll_created = create_app(
             gh, owner, enroll_slug, CONTROLLER_PERMISSIONS, open_url, clock
         )
         controller = gh.api(f"apps/{enroll_slug}")
     check_app(updater, owner, PERMISSIONS)
     check_app(controller, owner, CONTROLLER_PERMISSIONS)
+    progress("Obtaining and verifying the updater and controller keys locally")
     updater_key = app_key(owner, updater_slug, key, updater_created, open_url, prompt)
     controller_key = app_key(
         owner, enroll_slug, controller_key, enroll_created, open_url, prompt
@@ -659,9 +743,11 @@ def setup(
     enrollment.verify_app_key(
         owner, controller["id"], controller["client_id"], controller_key
     )
+    progress(f"Checking the {updater_slug} installation")
     ensure_installation(
         gh, owner, updater_slug, updater["id"], PERMISSIONS, open_url, sleep, clock
     )
+    progress(f"Checking the {enroll_slug} installation")
     ensure_installation(
         gh,
         owner,
@@ -672,6 +758,7 @@ def setup(
         sleep,
         clock,
     )
+    progress("Configuring the updater identity and protected central environments")
     ensure_variable(gh, owner, updater["client_id"], state["variable"])
     central = f"{owner}/github-actions"
     central_branch = gh.api(f"repos/{central}").get("default_branch")
@@ -697,6 +784,7 @@ def setup(
     put_env_secret(
         gh, central, CENTRAL_ENVIRONMENT, "ENROLLMENT_APP_PRIVATE_KEY", controller_key
     )
+    progress("Enrolling eligible repositories with protected updater credentials")
     results = enrollment.enroll(
         enrollment.GitHub(gh.run),
         owner,
@@ -706,6 +794,7 @@ def setup(
         remove_legacy_secret=True,
         grant_bypass=False,
         allow_exposed=legacy_rotation,
+        progress=progress,
     )
     if state["legacy_org_secret"] is not None:
         gh.remove_org_secret(owner, SECRET)
@@ -713,8 +802,10 @@ def setup(
             raise SetupError(
                 f"exposed organization secret {SECRET} removal read-back failed"
             )
+    progress("Reconciling updater bypasses and declared repository policies")
     covered = ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
     for result in results:
+        progress(f"Reconciling the declared policy for {result['repository']}")
         result["merge_policy"] = enrollment.reconcile_policy(
             enrollment.GitHub(gh.run), result["repository"], updater["id"]
         )
@@ -768,8 +859,10 @@ def main(
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--updater-key-file", type=Path)
     parser.add_argument("--enrollment-key-file", type=Path)
+    parser.add_argument("--result-file", type=Path)
     arguments = parser.parse_args(argv)
     enrollment = load_enrollment()
+    reporter = SetupReporter(arguments.owner, arguments.result_file)
     try:
         if not OWNER.fullmatch(arguments.owner):
             raise SetupError("--owner must be a GitHub organization login")
@@ -777,6 +870,7 @@ def main(
             preview(arguments.owner)
             return 0
         owner_only(environment)
+        reporter.progress("Starting authenticated owner setup")
         updater_key = None
         enrollment_key = None
         if arguments.updater_key_file:
@@ -805,10 +899,18 @@ def main(
             updater_key,
             open_url=webbrowser.open,
             controller_key=enrollment_key,
+            progress=reporter.progress,
         )
     except (SetupError, enrollment.EnrollmentError) as error:
-        print(f"owner_setup: {error}", file=sys.stderr)
+        message = safe_diagnostic(str(error))
+        reporter.finish(1, message)
+        print(f"owner_setup: {message}", file=sys.stderr)
         return 1
+    except Exception as error:
+        reporter.finish(1, f"{type(error).__name__}: {safe_diagnostic(str(error))}")
+        raise
+    reporter.progress("Owner setup complete")
+    reporter.finish(0)
     return 0
 
 
