@@ -803,6 +803,117 @@ def confirm_legacy_rotation(
         raise SetupError("owner key-rotation confirmation is required before migration")
 
 
+def verify_enrollment_job(
+    gh: GitHub, central: str, run: Mapping[str, Any], head: str, url: str
+) -> None:
+    attempt = run.get("run_attempt")
+    if type(attempt) is not int or attempt <= 0:
+        raise SetupError(f"enrollment run attempt is missing: {url}")
+    enrollment_jobs = []
+    page = 1
+    while True:
+        result = gh.api(
+            f"repos/{central}/actions/runs/{run['id']}/attempts/{attempt}/jobs"
+            f"?per_page=100&page={page}"
+        )
+        jobs = result.get("jobs") if isinstance(result, dict) else None
+        if not isinstance(jobs, list):
+            raise SetupError(f"enrollment job evidence is missing: {url}")
+        for job in jobs:
+            if (
+                job.get("run_id") != run["id"]
+                or job.get("run_attempt") != attempt
+                or job.get("head_sha") != head
+            ):
+                raise SetupError(f"enrollment job identity does not match setup: {url}")
+            if job.get("name") == "enroll":
+                enrollment_jobs.append(job)
+        if len(jobs) < 100:
+            break
+        page += 1
+    if (
+        len(enrollment_jobs) != 1
+        or enrollment_jobs[0].get("status") != "completed"
+        or enrollment_jobs[0].get("conclusion") != "success"
+    ):
+        raise SetupError(f"the mandatory enrollment job did not succeed: {url}")
+    for name in ("Mint controller installation token", "Enroll eligible repositories"):
+        steps = [
+            step
+            for step in enrollment_jobs[0].get("steps", [])
+            if step.get("name") == name
+        ]
+        if (
+            len(steps) != 1
+            or steps[0].get("status") != "completed"
+            or steps[0].get("conclusion") != "success"
+        ):
+            raise SetupError(f"mandatory enrollment step {name} did not succeed: {url}")
+
+
+def wait_for_enrollment(
+    gh: GitHub,
+    central: str,
+    branch: str,
+    head: str,
+    bootstrap: bool,
+    request_action: Callable[[SetupAction], None],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> None:
+    dispatched = gh.api(
+        f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
+        "POST",
+        {"ref": branch, "return_run_details": True, "inputs": {"bootstrap": bootstrap}},
+    )
+    run_id = dispatched.get("workflow_run_id") if isinstance(dispatched, dict) else None
+    if type(run_id) is not int or run_id <= 0:
+        raise SetupError("GitHub did not identify the dispatched enrollment run")
+    url = f"https://github.com/{central}/actions/runs/{run_id}"
+    phase = "bootstrap" if bootstrap else "enrollment"
+    action: SetupAction = {
+        "kind": SetupActionKind.WAIT_FOR_ENROLLMENT,
+        "summary": f"Waiting for protected {phase} run {run_id}",
+        "locations": [central],
+        "steps": [
+            "The existing protected keys stay in GitHub Actions; no local PEM "
+            "or new private key is needed.",
+            f"Setup is waiting for this exact run: {url}",
+        ],
+        "url": url,
+    }
+    request_action(action)
+    print_progress(action["summary"] + f": {url}")
+    deadline = clock() + ENROLLMENT_WAIT_SECONDS
+    while True:
+        run = gh.api(f"repos/{central}/actions/runs/{run_id}")
+        if (
+            run.get("id") != run_id
+            or run.get("head_sha") != head
+            or run.get("head_branch") != branch
+            or run.get("event") != "workflow_dispatch"
+            or run.get("path", "").split("@", 1)[0]
+            != ".github/workflows/enroll-publishers.yml"
+            or (run.get("repository") or {}).get("full_name", "").casefold()
+            != central.casefold()
+        ):
+            raise SetupError(f"enrollment run identity does not match setup: {url}")
+        if run.get("status") == "completed":
+            if run.get("conclusion") != "success":
+                raise SetupError(
+                    f"protected enrollment {run.get('conclusion')}: {url}; "
+                    "existing keys were preserved; no new key was requested"
+                )
+            verify_enrollment_job(gh, central, run, head, url)
+            break
+        if clock() >= deadline:
+            raise SetupError(
+                f"protected enrollment is still pending: {url}; "
+                "check this run before retrying; no new key was requested"
+            )
+        sleep(15)
+
+
 def resume_enrollment(
     owner: str,
     gh: GitHub,
@@ -874,57 +985,11 @@ def resume_enrollment(
     ensure_variable(gh, owner, updater["client_id"], variable)
     head = gh.api(f"repos/{central}/commits/{quote(branch, safe='')}")["sha"]
     progress("Resuming enrollment with existing protected credentials")
-    dispatched = gh.api(
-        f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
-        "POST",
-        {"ref": branch, "return_run_details": True},
-    )
-    run_id = dispatched.get("workflow_run_id") if isinstance(dispatched, dict) else None
-    if type(run_id) is not int or run_id <= 0:
-        raise SetupError("GitHub did not identify the dispatched enrollment run")
-    url = f"https://github.com/{central}/actions/runs/{run_id}"
-    action: SetupAction = {
-        "kind": SetupActionKind.WAIT_FOR_ENROLLMENT,
-        "summary": f"Waiting for protected enrollment run {run_id}",
-        "locations": [central],
-        "steps": [
-            "The existing protected keys stay in GitHub Actions; no local PEM "
-            "or new private key is needed.",
-            f"Setup is waiting for this exact run: {url}",
-        ],
-        "url": url,
-    }
-    request_action(action)
-    print_progress(action["summary"] + f": {url}")
-    deadline = clock() + ENROLLMENT_WAIT_SECONDS
-    while True:
-        run = gh.api(f"repos/{central}/actions/runs/{run_id}")
-        if (
-            run.get("id") != run_id
-            or run.get("head_sha") != head
-            or run.get("head_branch") != branch
-            or run.get("event") != "workflow_dispatch"
-            or run.get("path", "").split("@", 1)[0]
-            != ".github/workflows/enroll-publishers.yml"
-            or (run.get("repository") or {}).get("full_name", "").casefold()
-            != central.casefold()
-        ):
-            raise SetupError(f"enrollment run identity does not match setup: {url}")
-        if run.get("status") == "completed":
-            if run.get("conclusion") != "success":
-                raise SetupError(
-                    f"protected enrollment {run.get('conclusion')}: {url}; "
-                    "existing keys were preserved; no new key was requested"
-                )
-            break
-        if clock() >= deadline:
-            raise SetupError(
-                f"protected enrollment is still pending: {url}; "
-                "check this run before retrying; no new key was requested"
-            )
-        sleep(15)
+    wait_for_enrollment(gh, central, branch, head, False, request_action, sleep, clock)
     progress("Reconciling updater organization rulesets after verified enrollment")
     ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
+    progress("Bootstrapping callers with the verified updater access")
+    wait_for_enrollment(gh, central, branch, head, True, request_action, sleep, clock)
     return True
 
 
