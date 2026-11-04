@@ -1179,6 +1179,39 @@ def test_recovery_requires_exact_attempt_and_successful_authentication_steps(
     assert fixture.events == ["dispatch:False"]
 
 
+def test_recovery_accepts_jobs_without_optional_attempt_metadata(
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    for run_id in (123, 124):
+        fixture.responses[fixture.central + f"/actions/runs/{run_id}/attempts/1/jobs"][
+            "jobs"
+        ][0].pop("run_attempt")
+    with mock.patch.object(owner_setup, "ensure_org_rulesets"):
+        owner_setup.setup("tj-agents", fixture.gh)
+
+
+def test_recovery_refreshes_the_head_before_bootstrap(
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    fixture.runs[:] = [
+        fixture.completed,
+        {**fixture.completed, "head_sha": "b" * 40},
+    ]
+    fixture.responses[fixture.central + "/actions/runs/124/attempts/1/jobs"]["jobs"][0][
+        "head_sha"
+    ] = "b" * 40
+
+    def advance_head(*_: Any) -> None:
+        fixture.responses[fixture.central + "/commits/main"]["sha"] = "b" * 40
+
+    with mock.patch.object(
+        owner_setup, "ensure_org_rulesets", side_effect=advance_head
+    ):
+        owner_setup.setup("tj-agents", fixture.gh)
+
+
 def test_failed_bootstrap_preserves_verified_keys_and_its_own_run_url(
     configured_setup: SimpleNamespace,
     tmp_path: Path,
