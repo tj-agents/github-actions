@@ -104,22 +104,32 @@ window. The agent does not sign in for the owner or read private keys. Setup sho
 progress per repository.
 
 When discovery finds no legacy secret metadata, an existing setup resumes through its protected central
-credentials after verifying the existing Apps, organization and repository identities, exact central environment
-default-branch protections and both protected secret metadata records. Setup dispatches the existing
-`enroll-publishers.yml` on the central repository's current default branch, waits for the exact returned
-run to succeed, then reconciles organization rulesets. Before dispatch, setup checks the existing App
-installations. Valid installations require no browser action. If an installation needs repository access
-or permission acceptance, setup opens its exact installation settings page and waits for the owner. Both
-cases reuse the protected keys without local PEM or key generation prompts. A workflow failure, timeout
-or mismatched run stops with the structured run URL;
-it never falls through to requesting fresh keys. Secret metadata alone proves neither a usable key nor
-installed runtime adoption; the enrollment workflow must authenticate the stored credentials.
+credentials after verifying the existing Apps, organization and repository identities, exact central
+environment default-branch protections and both protected secret metadata records. Setup dispatches the
+existing `enroll-publishers.yml` on the central repository's current default branch with `bootstrap=false`
+to enroll and authenticate the stored credentials before caller bootstrap. It verifies the exact returned
+run and attempt. Its `enroll` job, `Mint controller installation token` step and
+`Enroll eligible repositories` step must all succeed. Aggregate workflow success alone is insufficient.
+The owner process then reconciles organization ruleset bypasses and dispatches `bootstrap=true` for the
+full enrollment and caller-bootstrap flow, requiring the same exact-run, attempt, job and step evidence.
+The boolean `bootstrap` dispatch input defaults to true; normal scheduled, push and manual runs retain
+the full flow.
+
+Before dispatch, setup checks the existing App installations. Valid installations require no browser
+action. If an installation needs repository access or permission acceptance, setup opens its exact
+installation settings page and waits for the owner. Both cases reuse the protected keys without local
+PEM or key generation prompts. A failed or skipped required job or step, workflow failure, timeout or
+mismatched run stops with the structured run URL; it never falls through to requesting fresh keys.
+Secret metadata alone proves neither a usable key nor installed runtime adoption; the enrollment
+workflow must authenticate the stored credentials.
 
 ```text
 Existing protected provisioning verified, no legacy secret metadata:
-dispatch enroll-publishers.yml -> waiting_for_enrollment with the exact returned run URL
-matching run succeeds -> reconcile organization rulesets -> complete
-run fails or times out -> failed with run URL, no new key request
+dispatch bootstrap=false -> verify exact run/attempt and successful enroll job and required steps
+reconcile organization ruleset bypasses
+dispatch bootstrap=true -> verify exact run/attempt and successful enroll job and required steps -> complete
+either dispatch: waiting_for_enrollment carries its returned run URL
+failed/skipped evidence or timeout -> failed with run URL, no new key request
 ```
 
 The native `!` command returning zero proves only that the Windows launcher returned successfully. Read
