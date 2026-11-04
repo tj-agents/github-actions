@@ -789,3 +789,284 @@ def test_empty_organization_rulesets_do_not_skip_repository_protections(
     assert bridge.protected.call_count == 2
     assert bridge.enroll.call_args.kwargs["grant_bypass"] is False
     bridge.reconcile_policy.assert_called_once_with(mock.ANY, "tj-agents/example", 42)
+
+
+@pytest.fixture
+def configured_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    updater = {
+        "id": 42,
+        "client_id": "Iv1.updater",
+        "slug": "tj-agents-pin-updater",
+        "owner": {"login": "tj-agents"},
+        "permissions": owner_setup.PERMISSIONS,
+    }
+    controller = {
+        "id": 90,
+        "client_id": "Iv1.controller",
+        "slug": "tj-agents-enrollment-controller",
+        "owner": {"login": "tj-agents"},
+        "permissions": owner_setup.CONTROLLER_PERMISSIONS,
+    }
+    state = {
+        "app": updater,
+        "controller": controller,
+        "slug": updater["slug"],
+        "controller_slug": controller["slug"],
+        "legacy_org_secret": None,
+        "legacy_repositories": [],
+        "rulesets": [],
+        "variable": {"value": "Iv1.updater", "visibility": "all"},
+    }
+    central = "repos/tj-agents/github-actions"
+    env = central + "/environments/update-enrollment"
+    completed = {
+        "id": 123,
+        "head_sha": "a" * 40,
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "path": ".github/workflows/enroll-publishers.yml",
+        "repository": {"full_name": "tj-agents/github-actions"},
+        "status": "completed",
+        "conclusion": "success",
+    }
+    responses: dict[str, Any] = {
+        central: {"default_branch": "main"},
+        central + "/commits/main": {"sha": "a" * 40},
+        central + "/actions/variables/ENROLLMENT_APP_CLIENT_ID": {
+            "value": "Iv1.controller"
+        },
+        central + "/actions/variables/ENROLLMENT_APP_ID": {"value": "90"},
+        central + "/actions/variables/UPDATE_APP_ID": {"value": "42"},
+        env: {
+            "deployment_branch_policy": {
+                "protected_branches": False,
+                "custom_branch_policies": True,
+            }
+        },
+        env + "/variables/TJ_AGENTS_ENROLLMENT_BRANCH": {"value": "main"},
+        env + "/deployment-branch-policies": {
+            "branch_policies": [{"id": 1, "name": "main", "type": "branch"}]
+        },
+        env + "/secrets": {
+            "secrets": [
+                {"name": owner_setup.SECRET},
+                {"name": "ENROLLMENT_APP_PRIVATE_KEY"},
+            ]
+        },
+        "orgs/tj-agents": {"id": 1},
+        "orgs/tj-agents/actions/variables/UPDATE_APP_CLIENT_ID": state["variable"],
+        "orgs/tj-agents/installations": {
+            "installations": [
+                {
+                    "id": app["id"],
+                    "app_id": app["id"],
+                    "app_slug": app["slug"],
+                    "permissions": app["permissions"],
+                    "repository_selection": "all",
+                }
+                for app in (updater, controller)
+            ]
+        },
+        central + "/actions/workflows/enroll-publishers.yml/dispatches": {
+            "workflow_run_id": 123
+        },
+    }
+    calls: list[tuple[str, str, Any]] = []
+    runs = [completed]
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert command[1] == "api", "configured recovery must not request a local key"
+        path = command[4].split("?", 1)[0]
+        method = (
+            command[command.index("--method") + 1] if "--method" in command else "GET"
+        )
+        data = json.loads(kwargs["input"]) if kwargs.get("input") else None
+        calls.append((method, path, data))
+        if path == central + "/actions/runs/123":
+            value = runs.pop(0) if len(runs) > 1 else runs[0]
+        else:
+            assert path in responses, path
+            value = responses[path]
+        return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
+    return SimpleNamespace(
+        gh=owner_setup.GitHub(run),
+        state=state,
+        responses=responses,
+        calls=calls,
+        runs=runs,
+        completed=completed,
+        central=central,
+        env=env,
+    )
+
+
+def test_configured_rerun_uses_protected_keys_without_owner_prompts(
+    configured_setup: SimpleNamespace,
+    tmp_path: Path,
+) -> None:
+    fixture = configured_setup
+    fixture.runs.insert(
+        0, {**fixture.completed, "status": "in_progress", "conclusion": None}
+    )
+    result_file = tmp_path / "result.json"
+    reporter = owner_setup.SetupReporter("tj-agents", result_file)
+    browser, prompt = mock.Mock(), mock.Mock()
+    receipts = []
+
+    def observe(_: float) -> None:
+        receipts.append(json.loads(result_file.read_text(encoding="utf-8")))
+
+    owner_setup.setup(
+        "tj-agents",
+        fixture.gh,
+        open_url=browser,
+        prompt=prompt,
+        sleep=observe,
+        progress=reporter.progress,
+        request_action=reporter.awaiting,
+    )
+    browser.assert_not_called()
+    prompt.assert_not_called()
+    assert receipts[0]["action"]["kind"] == "waiting_for_enrollment"
+    assert (
+        receipts[0]["action"]["url"]
+        == "https://github.com/tj-agents/github-actions/actions/runs/123"
+    )
+    writes = [call for call in fixture.calls if call[0] != "GET"]
+    assert writes == [
+        (
+            "POST",
+            fixture.central + "/actions/workflows/enroll-publishers.yml/dispatches",
+            {"ref": "main", "return_run_details": True},
+        )
+    ]
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out", "skipped"])
+def test_failed_recovery_preserves_keys_and_exact_run_diagnostics(
+    conclusion: str,
+    configured_setup: SimpleNamespace,
+    tmp_path: Path,
+) -> None:
+    fixture = configured_setup
+    fixture.runs[:] = [{**fixture.completed, "conclusion": conclusion}]
+    path = tmp_path / "result.json"
+    browser, prompt = mock.Mock(), mock.Mock()
+    with mock.patch.object(owner_setup, "GitHub", return_value=fixture.gh):
+        assert (
+            owner_setup.main(
+                ["--owner", "tj-agents", "--apply", "--result-file", str(path)],
+                environment={},
+            )
+            == 1
+        )
+    result = json.loads(path.read_text(encoding="utf-8"))
+    assert result["state"] == "failed"
+    assert result["action"]["url"].endswith("/runs/123")
+    assert conclusion in result["error"]
+    assert "no new key was requested" in result["error"]
+    assert all(
+        call[0] == "GET" or call[1].endswith("/dispatches") for call in fixture.calls
+    )
+    browser.assert_not_called()
+    prompt.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("id", 124),
+        ("head_sha", "b" * 40),
+        ("head_branch", "other"),
+        ("event", "push"),
+        ("path", ".github/workflows/other.yml"),
+        ("repository", {"full_name": "other/github-actions"}),
+    ],
+)
+def test_recovery_rejects_another_run_even_when_successful(
+    field: str,
+    value: Any,
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    fixture.runs[:] = [{**fixture.completed, field: value}]
+    browser, prompt = mock.Mock(), mock.Mock()
+    with pytest.raises(owner_setup.SetupError, match="identity does not match"):
+        owner_setup.setup("tj-agents", fixture.gh, open_url=browser, prompt=prompt)
+    browser.assert_not_called()
+    prompt.assert_not_called()
+
+
+def test_pending_recovery_times_out_without_requesting_fresh_keys(
+    configured_setup: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = configured_setup
+    fixture.runs[:] = [{**fixture.completed, "status": "waiting", "conclusion": None}]
+    monkeypatch.setattr(owner_setup, "ENROLLMENT_WAIT_SECONDS", 1)
+    elapsed = [0.0]
+
+    def advance(seconds: float) -> None:
+        elapsed[0] += seconds
+
+    browser, prompt = mock.Mock(), mock.Mock()
+    with pytest.raises(owner_setup.SetupError, match=r"still pending.*runs/123"):
+        owner_setup.setup(
+            "tj-agents",
+            fixture.gh,
+            open_url=browser,
+            prompt=prompt,
+            sleep=advance,
+            clock=lambda: elapsed[0],
+        )
+    browser.assert_not_called()
+    prompt.assert_not_called()
+
+
+def test_recovery_refuses_drifted_central_identity_before_dispatch(
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    fixture.responses[fixture.central + "/actions/variables/UPDATE_APP_ID"] = {
+        "value": "999"
+    }
+    with pytest.raises(owner_setup.SetupError, match="does not match its verified App"):
+        owner_setup.setup("tj-agents", fixture.gh)
+    assert all(call[0] == "GET" for call in fixture.calls)
+
+
+def test_recovery_refuses_broad_environment_before_dispatch(
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    fixture.responses[fixture.env]["deployment_branch_policy"] = {
+        "protected_branches": True,
+        "custom_branch_policies": False,
+    }
+    with pytest.raises(
+        owner_setup.load_enrollment().EnrollmentError, match="custom exact branches"
+    ):
+        owner_setup.setup("tj-agents", fixture.gh)
+    assert all(call[0] == "GET" for call in fixture.calls)
+
+
+def test_initial_setup_with_missing_protected_key_does_not_dispatch(
+    configured_setup: SimpleNamespace,
+) -> None:
+    fixture = configured_setup
+    fixture.responses[fixture.env + "/secrets"] = {
+        "secrets": [{"name": owner_setup.SECRET}]
+    }
+    assert not owner_setup.resume_enrollment(
+        "tj-agents",
+        fixture.gh,
+        fixture.state,
+        mock.Mock(),
+        mock.Mock(),
+        mock.Mock(),
+        mock.Mock(),
+        mock.Mock(),
+    )
+    assert all(call[0] == "GET" for call in fixture.calls)
