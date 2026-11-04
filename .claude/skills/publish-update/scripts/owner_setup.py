@@ -123,6 +123,43 @@ class GitHub:
             )
         return json.loads(result.stdout) if result.stdout.strip() else None
 
+    def organization_rulesets(self, owner: str) -> list[dict[str, Any]]:
+        rulesets: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            path = f"orgs/{owner}/rulesets?per_page=100&page={page}"
+            result = self.call(["api", path, "--method", "GET"])
+            try:
+                data = json.loads(result.stdout)
+            except ValueError:
+                data = None
+            if result.returncode:
+                if (
+                    page == 1
+                    and isinstance(data, dict)
+                    and str(data.get("status")) == "403"
+                    and data.get("message")
+                    == "Upgrade to GitHub Team to enable this feature."
+                ):
+                    print(
+                        "Organization rulesets are unavailable on this GitHub plan; "
+                        "declared repository policies remain enforced.",
+                        flush=True,
+                    )
+                    return []
+                raise SetupError(
+                    f"gh api GET {path} failed: "
+                    f"{(result.stderr or result.stdout).strip()[:300]}"
+                )
+            if not isinstance(data, list) or any(
+                not isinstance(item, dict) for item in data
+            ):
+                raise SetupError(f"invalid organization ruleset response for {owner}")
+            rulesets.extend(data)
+            if len(data) < 100:
+                return rulesets
+            page += 1
+
     def optional(self, path: str, absent: tuple[str, ...] = ("HTTP 404",)) -> Any:
         result = self.call(["api", path, "--method", "GET"])
         if result.returncode == 0:
@@ -218,13 +255,7 @@ def discover(gh: GitHub, owner: str) -> dict[str, Any]:
         if len(batch) < 100:
             break
         page += 1
-    rulesets, page = [], 1
-    while True:
-        batch = gh.api(f"orgs/{owner}/rulesets?per_page=100&page={page}")
-        rulesets.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
+    rulesets = gh.organization_rulesets(owner)
     updater, controller = app_slug(owner), controller_slug(owner)
     return {
         "login": login,
@@ -720,8 +751,8 @@ def preview(owner: str) -> None:
         f"- store the enrollment key only in {owner}/github-actions/update-enrollment"
     )
     print(
-        "- add the updater as an org-ruleset bypass; repository bypasses apply "
-        "only to enrolled repositories"
+        "- add the updater to supported organization rulesets and declared "
+        "repository policies only for enrolled repositories"
     )
     print("Nothing is written until --apply is supplied.")
 
