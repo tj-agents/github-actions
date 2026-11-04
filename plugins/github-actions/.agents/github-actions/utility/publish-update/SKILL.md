@@ -58,16 +58,41 @@ regeneration select the caller's `update-pins` environment, restricted to its ex
 the caller still passes it by name to the reusable workflow. Core CI computes export and digest hashes;
 this action does not update them.
 
-An organization owner bootstraps publication once from this skill directory:
+An organization owner bootstraps publication once. Preview from this skill directory is offline and
+does not validate owner authorization:
 
 ```text
 python -B scripts/owner_setup.py --owner tj-agents
-uv run --locked --script scripts/owner_setup.py --owner tj-agents --apply
 ```
 
-Preview is offline. Apply's locked environment supplies its cryptographic verifier on Windows and Linux.
-It requires the owner's own GitHub sign-in and refuses agent sessions and token
-overrides. It configures `<owner>-pin-updater` for contents, pull requests and workflows write, plus a
+For Windows, give the owner this command in the CLI's native `!` Bash entry. Resolve the skill directory
+and a new local result file to absolute paths before supplying the command:
+
+```bash
+!env -u TJ_AGENT -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR -u GH_PROMPT_DISABLED powershell.exe -NoProfile -File "<absolute-skill-directory>/scripts/owner_setup.ps1" -Owner tj-agents -ResultFile "<absolute-local-result-file>"
+```
+
+The launcher opens an interactive owner PowerShell window and invokes the locked Python setup. On
+Linux or macOS, the owner runs the locked setup directly in their terminal:
+
+```bash
+uv run --locked --script "<absolute-skill-directory>/scripts/owner_setup.py" --owner tj-agents --apply --result-file "<absolute-local-result-file>"
+```
+
+Apply requires the owner's own GitHub sign-in and refuses agent sessions and token overrides. The owner
+completes App creation, installation and private-key prompts in that interactive window. The agent does
+not sign in for the owner or read private keys. Setup shows discovery and setup progress per repository.
+
+The native `!` command returning zero proves only that the Windows launcher returned successfully. Read
+the exact result file, whose atomic JSON contains `schema_version: 1`, `owner`, `pid`, `state`, `phase`,
+`exit_code`, `observed_at` and an optional `error`. Reuse a running attempt and its result file; do not
+blindly relaunch or ask the owner to paste terminal output. Diagnose a failed attempt from its phase and
+error. A missing result or a `running` state leaves setup unverified. Only `complete` for the requested
+owner with `exit_code: 0` proves setup returned success; verified CI and publication remain rollout
+acceptance conditions.
+
+The locked environment supplies its cryptographic verifier. Setup configures `<owner>-pin-updater` for
+contents, pull requests and workflows write, plus a
 separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and
 environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
 environment. Only the updater key reaches consumer `update-pins` environments.
