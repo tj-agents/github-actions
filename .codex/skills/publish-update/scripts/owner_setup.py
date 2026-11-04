@@ -82,8 +82,13 @@ class SetupState(StrEnum):
     FAILED = "failed"
 
 
+class SetupActionKind(StrEnum):
+    IDENTIFY_LEGACY_APP = "identify_legacy_app"
+    ROTATE_UPDATER_KEYS = "rotate_updater_keys"
+
+
 class SetupAction(TypedDict):
-    kind: str
+    kind: SetupActionKind
     summary: str
     locations: list[str]
     steps: list[str]
@@ -718,7 +723,7 @@ def confirm_legacy_rotation(
             f"{location}: https://github.com/{repository}/settings/{settings}"
         )
     action: SetupAction = {
-        "kind": "identify_legacy_app",
+        "kind": SetupActionKind.IDENTIFY_LEGACY_APP,
         "summary": "Verify the issuing App for legacy updater credentials",
         "locations": locations,
         "steps": [
@@ -770,7 +775,7 @@ def confirm_legacy_rotation(
         )
     url = f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
     action = {
-        "kind": "rotate_updater_keys",
+        "kind": SetupActionKind.ROTATE_UPDATER_KEYS,
         "summary": f"Waiting for key rotation of verified updater {identity}",
         "locations": locations,
         "steps": [
@@ -778,8 +783,9 @@ def confirm_legacy_rotation(
             "Under Private keys, delete each previously distributed key. "
             "This invalidates every use of those keys, including any copied key; "
             "removing an Actions secret alone does not revoke it.",
-            "Generate a new private key after deletion and keep the downloaded "
-            ".pem locally for the next prompt. Do not paste or send its contents.",
+            "The next step will guide you through generating a fresh private key "
+            "and selecting its downloaded .pem locally. Do not paste or send "
+            "its contents.",
             f"Return here and type 'revoked {slug}' to confirm deletion is complete.",
         ],
         "url": url,
