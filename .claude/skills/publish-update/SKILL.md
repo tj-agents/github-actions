@@ -1,6 +1,6 @@
 ---
 name: publish-update
-description: Publish a configured repository's default-branch update hint for an independently authorized consumer. Use when enrolling a repository or rendering its shared publisher workflow.
+description: Publish a configured repository's verified default-branch update hint for an independently authorized consumer. Use when enrolling a repository or rendering its shared publisher workflow.
 kind: utility
 domain: github-actions
 profile: core
