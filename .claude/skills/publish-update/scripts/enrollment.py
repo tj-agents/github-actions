@@ -467,13 +467,18 @@ def has_repository_secret(gh: Any, repository: str, name: str) -> bool:
     )
 
 
-def legacy_key_locations(gh: Any, owner: str) -> list[str]:
+def legacy_key_locations(
+    gh: Any, owner: str, progress: Callable[[str], None] | None = None
+) -> list[str]:
     """Inventory exposed publisher keys without retrieving any secret value."""
     exposed = []
     for repository in inventory(gh, owner):
-        branch = gh.api(f"repos/{repository}").get("default_branch")
+        if progress is not None:
+            progress(f"Checking updater eligibility and exposed keys in {repository}")
+        metadata = gh.api(f"repos/{repository}")
+        branch = metadata.get("default_branch")
         if not isinstance(branch, str) or not eligible_repository(
-            gh, owner, repository, branch
+            gh, owner, repository, branch, metadata
         ):
             continue
         if has_repository_secret(gh, repository, SECRET):
@@ -545,6 +550,7 @@ def enroll(
     remove_legacy_secret: bool = False,
     grant_bypass: bool = True,
     allow_exposed: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     if (
         not OWNER.fullmatch(owner)
@@ -558,6 +564,8 @@ def enroll(
         )
     results = []
     for repository in inventory(gh, owner):
+        if progress is not None:
+            progress(f"Checking protected enrollment for {repository}")
         metadata = gh.api(f"repos/{repository}")
         branch = metadata.get("default_branch")
         if not isinstance(branch, str) or not branch:
