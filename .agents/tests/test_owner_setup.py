@@ -2,7 +2,9 @@ import base64
 import importlib.util
 import io
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -88,6 +90,289 @@ def test_preview_discloses_protected_secret_boundaries_without_github() -> None:
     assert "exact default branch" in content
     assert "updater key to update-pins" in content
     assert "organization secret" not in content
+
+
+def test_apply_saves_its_failure_and_last_progress_without_console_relay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result_file = tmp_path / "owner result.json"
+    observed = []
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        kwargs["progress"]("Checking protected enrollment for tj-agents/github")
+        observed.append(json.loads(result_file.read_text(encoding="utf-8")))
+        raise owner_setup.SetupError("GitHub request failed: HTTP 403")
+
+    monkeypatch.setattr(owner_setup, "setup", fail)
+    assert (
+        owner_setup.main(
+            ["--owner", "tj-agents", "--apply", "--result-file", str(result_file)],
+            environment={},
+        )
+        == 1
+    )
+    assert observed[0]["state"] == "running"
+    assert observed[0]["exit_code"] is None
+    result = json.loads(result_file.read_text(encoding="utf-8"))
+    assert result["owner"] == "tj-agents"
+    assert result["pid"] == os.getpid()
+    assert result["state"] == "failed"
+    assert result["exit_code"] == 1
+    assert result["phase"] == observed[0]["phase"]
+    assert result["error"] == "GitHub request failed: HTTP 403"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_result_reports_completion_only_after_setup_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result_file = tmp_path / "result.json"
+
+    def complete(*args: Any, **kwargs: Any) -> None:
+        assert json.loads(result_file.read_text(encoding="utf-8"))["state"] == "running"
+
+    monkeypatch.setattr(owner_setup, "setup", complete)
+    assert (
+        owner_setup.main(
+            ["--owner", "tj-agents", "--apply", "--result-file", str(result_file)],
+            environment={},
+        )
+        == 0
+    )
+    result = json.loads(result_file.read_text(encoding="utf-8"))
+    assert result["state"] == "complete"
+    assert result["exit_code"] == 0
+    assert "error" not in result
+
+
+def test_preview_does_not_create_an_apply_result(tmp_path: Path) -> None:
+    result_file = tmp_path / "result.json"
+    run = mock.Mock()
+    assert (
+        owner_setup.main(
+            ["--owner", "tj-agents", "--result-file", str(result_file)], run=run
+        )
+        == 0
+    )
+    assert not result_file.exists()
+    run.assert_not_called()
+
+
+def test_rejected_agent_saves_failure_before_any_github_call(tmp_path: Path) -> None:
+    result_file = tmp_path / "result.json"
+    run = mock.Mock()
+    assert (
+        owner_setup.main(
+            ["--owner", "tj-agents", "--apply", "--result-file", str(result_file)],
+            environment={"TJ_AGENT": "1"},
+            run=run,
+        )
+        == 1
+    )
+    assert json.loads(result_file.read_text(encoding="utf-8"))["state"] == "failed"
+    run.assert_not_called()
+
+
+def test_unexpected_failure_is_saved_and_still_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result_file = tmp_path / "result.json"
+    monkeypatch.setattr(
+        owner_setup, "setup", mock.Mock(side_effect=RuntimeError("broken"))
+    )
+    with pytest.raises(RuntimeError, match="broken"):
+        owner_setup.main(
+            ["--owner", "tj-agents", "--apply", "--result-file", str(result_file)],
+            environment={},
+        )
+    result = json.loads(result_file.read_text(encoding="utf-8"))
+    assert result["state"] == "failed"
+    assert result["error"] == "RuntimeError: broken"
+
+
+def test_failure_result_and_console_redact_authentication_material(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result_file = tmp_path / "result.json"
+    manifest_code = "test-manifest-code"
+    token = "ghp_testtokenvalue"
+    key = "-----BEGIN PRIVATE KEY-----\ntestkeyvalue\n-----END PRIVATE KEY-----"
+    failure = (
+        f"app-manifests/{manifest_code}/conversions {token} {key} Bearer jwt-value"
+    )
+    monkeypatch.setattr(
+        owner_setup, "setup", mock.Mock(side_effect=owner_setup.SetupError(failure))
+    )
+    assert (
+        owner_setup.main(
+            ["--owner", "tj-agents", "--apply", "--result-file", str(result_file)],
+            environment={},
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    output = result_file.read_text(encoding="utf-8") + captured.out + captured.err
+    for sensitive in (manifest_code, token, "testkeyvalue", "jwt-value"):
+        assert sensitive not in output
+    assert "[redacted" in output
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows owner launcher")
+def test_windows_owner_launcher_refuses_agent_without_opening_a_window(
+    tmp_path: Path,
+) -> None:
+    result_file = tmp_path / "owner result.json"
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-File",
+            str(SCRIPT.with_suffix(".ps1")),
+            "-Owner",
+            "tj-agents",
+            "-ResultFile",
+            str(result_file),
+        ],
+        env={**os.environ, "TJ_AGENT": "1"},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "your own GitHub sign-in" in result.stderr
+    assert not result_file.exists()
+
+
+def simulate_windows_launcher(
+    directory: Path, *, interactive: bool = False
+) -> subprocess.CompletedProcess[str]:
+    launcher = directory / "owner_setup.ps1"
+    launcher.write_text(
+        SCRIPT.with_suffix(".ps1").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    fake_uv = directory / "fake_uv.ps1"
+    fake_uv.write_text("exit 7\n", encoding="utf-8")
+    arguments_file = directory / "arguments.json"
+    result_file = directory / "result.json"
+
+    def literal(path: Path) -> str:
+        return "'" + str(path).replace("'", "''") + "'"
+
+    mode = "-Interactive" if interactive else ""
+    invocation = (
+        f"& {literal(launcher)} -Owner tj-agents "
+        f"-ResultFile {literal(result_file)} {mode}"
+    )
+    simulation = f"""
+function global:Get-Command {{
+    param($Name, $CommandType, $ErrorAction)
+    [pscustomobject]@{{Source = {literal(fake_uv)}}}
+}}
+function global:Start-Process {{
+    param($FilePath, $WindowStyle, [switch]$PassThru, [string[]]$ArgumentList)
+    $ArgumentList | ConvertTo-Json | Set-Content -LiteralPath {literal(arguments_file)}
+    [pscustomobject]@{{Id = 4242}}
+}}
+function global:Get-CimInstance {{
+    param($ClassName, $Filter)
+    [pscustomobject]@{{CommandLine = {literal(directory / "owner_setup.py")}}}
+}}
+{invocation}
+if ($LASTEXITCODE) {{ exit $LASTEXITCODE }}
+"""
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in {"TJ_AGENT", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"}
+    }
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", simulation],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows owner launcher")
+def test_windows_launcher_preserves_paths_with_spaces(tmp_path: Path) -> None:
+    directory = tmp_path / "skill and results with spaces"
+    directory.mkdir()
+    result = simulate_windows_launcher(directory)
+    assert result.returncode == 0, result.stderr
+    arguments = json.loads(
+        (directory / "arguments.json").read_text(encoding="utf-8-sig")
+    )
+    assert (
+        arguments[arguments.index("-File") + 1] == f'"{directory / "owner_setup.ps1"}"'
+    )
+    assert (
+        arguments[arguments.index("-ResultFile") + 1]
+        == f'"{directory / "result.json"}"'
+    )
+    assert arguments[-1] == "-Interactive"
+    assert not (directory / "result.json").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows owner launcher")
+def test_windows_startup_failure_replaces_stale_failure_without_console_relay(
+    tmp_path: Path,
+) -> None:
+    result_file = tmp_path / "result.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "owner": "tj-agents",
+                "state": "failed",
+                "error": "earlier attempt",
+                "observed_at": "2020-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = simulate_windows_launcher(tmp_path, interactive=True)
+    assert result.returncode == 7, result.stderr
+    receipt = json.loads(result_file.read_text(encoding="utf-8"))
+    assert receipt["state"] == "failed"
+    assert receipt["exit_code"] == 7
+    assert "earlier attempt" not in receipt["error"]
+    assert "before saving its failure result" in receipt["error"]
+    assert not (tmp_path / "arguments.json").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows owner launcher")
+def test_windows_launcher_reuses_the_active_attempt(tmp_path: Path) -> None:
+    result_file = tmp_path / "result.json"
+    previous = {"owner": "tj-agents", "state": "running", "pid": 123}
+    result_file.write_text(json.dumps(previous), encoding="utf-8")
+    result = simulate_windows_launcher(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "already running" in result.stdout
+    assert not (tmp_path / "arguments.json").exists()
+    assert json.loads(result_file.read_text(encoding="utf-8")) == previous
+
+
+def test_discovery_reports_each_repository_and_reuses_its_verified_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = owner_setup.load_enrollment()
+    repositories = ["tj-agents/first", "tj-agents/second"]
+    monkeypatch.setattr(bridge, "inventory", lambda *_: iter(repositories))
+    eligible = mock.Mock(return_value=False)
+    monkeypatch.setattr(bridge, "eligible_repository", eligible)
+    gh = mock.Mock()
+    gh.api.return_value = {"default_branch": "main"}
+    progress: list[str] = []
+    assert bridge.legacy_key_locations(gh, "tj-agents", progress=progress.append) == []
+    assert len(progress) == len(repositories)
+    assert all(
+        repository in message
+        for repository, message in zip(repositories, progress, strict=True)
+    )
+    assert gh.api.call_count == len(repositories)
+    assert all(call.args[-1] is gh.api.return_value for call in eligible.call_args_list)
 
 
 def test_owner_read_does_not_treat_permission_failure_as_absent() -> None:
