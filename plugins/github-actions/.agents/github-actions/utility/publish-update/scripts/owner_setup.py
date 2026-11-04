@@ -32,7 +32,7 @@ from enum import StrEnum
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import parse_qs, quote, urlsplit
 
 PERMISSIONS = {"contents": "write", "pull_requests": "write", "workflows": "write"}
@@ -50,6 +50,7 @@ CENTRAL_BRANCH_VARIABLE = "TJ_AGENTS_ENROLLMENT_BRANCH"
 GH_TIMEOUT_SECONDS = 90
 WAIT_SECONDS = 300
 POLL_SECONDS = 5
+ENROLLMENT_WAIT_SECONDS = 3600
 if sys.platform == "win32":
     NO_WINDOW = subprocess.CREATE_NO_WINDOW
 else:
@@ -82,6 +83,20 @@ class SetupState(StrEnum):
     FAILED = "failed"
 
 
+class SetupActionKind(StrEnum):
+    IDENTIFY_LEGACY_APP = "identify_legacy_app"
+    ROTATE_UPDATER_KEYS = "rotate_updater_keys"
+    WAIT_FOR_ENROLLMENT = "waiting_for_enrollment"
+
+
+class SetupAction(TypedDict):
+    kind: SetupActionKind
+    summary: str
+    locations: list[str]
+    steps: list[str]
+    url: str | None
+
+
 def safe_diagnostic(message: str) -> str:
     message = re.sub(
         r"app-manifests/[^/\s]+/conversions",
@@ -111,11 +126,18 @@ class SetupReporter:
         self.owner = owner
         self.result_file = result_file
         self.phase = "Starting owner setup"
+        self.action: SetupAction | None = None
 
     def progress(self, message: str) -> None:
+        self.action = None
         self.phase = message
         self._write(SetupState.RUNNING, None)
         print_progress(message)
+
+    def awaiting(self, action: SetupAction) -> None:
+        self.action = action
+        self.phase = action["summary"]
+        self._write(SetupState.RUNNING, None)
 
     def finish(self, exit_code: int, error: str | None = None) -> None:
         self._write(
@@ -140,6 +162,8 @@ class SetupReporter:
         }
         if error is not None:
             result["error"] = safe_diagnostic(error)
+        if self.action is not None:
+            result["action"] = self.action
         self.result_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.result_file.with_name(
             f".{self.result_file.name}.{os.getpid()}.tmp"
@@ -679,6 +703,295 @@ def ensure_org_rulesets(
     return covered
 
 
+def confirm_legacy_rotation(
+    owner: str,
+    state: Mapping[str, Any],
+    open_url: Callable[[str], Any],
+    prompt: Callable[[str], str],
+    progress: Callable[[str], None],
+    request_action: Callable[[SetupAction], None],
+) -> None:
+    locations = []
+    if state["legacy_org_secret"] is not None:
+        locations.append(
+            f"Organization {owner}: https://github.com/organizations/{owner}"
+            f"/settings/secrets/actions/{SECRET}"
+        )
+    for location in state.get("legacy_repositories", []):
+        parts = location.split("/")
+        repository = "/".join(parts[:2])
+        settings = "environments" if len(parts) == 3 else "secrets/actions"
+        locations.append(
+            f"{location}: https://github.com/{repository}/settings/{settings}"
+        )
+    action: SetupAction = {
+        "kind": SetupActionKind.IDENTIFY_LEGACY_APP,
+        "summary": "Verify the issuing App for legacy updater credentials",
+        "locations": locations,
+        "steps": [
+            f"Found {SECRET} metadata at the listed locations. Secret values "
+            "were not read; their name does not identify the issuing App or "
+            "prove that a key was copied.",
+            "Use the original provisioning records to identify every App whose "
+            "keys were distributed there. Do not revoke an unrelated bot App's keys.",
+        ],
+        "url": None,
+    }
+    progress(action["summary"])
+    request_action(action)
+    for line in [*action["locations"], *action["steps"]]:
+        print_progress(line)
+    updater = state.get("app")
+    if updater is None:
+        raise SetupError(
+            "legacy credential identity is unresolved: the expected updater App "
+            "does not exist. Identify the issuing Apps from provisioning records "
+            "before retiring their credentials; no revocation was requested"
+        )
+    check_app(updater, owner, PERMISSIONS)
+    variable = state.get("variable")
+    if not variable or variable.get("value") != updater.get("client_id"):
+        raise SetupError(
+            f"legacy credential identity is unresolved: organization {VARIABLE} "
+            "does not match the verified updater App. Reconcile provisioning "
+            "records and configuration before retrying; no revocation was requested"
+        )
+    slug = state["slug"]
+    identity = (
+        f"{owner}/{slug} (App ID {updater['id']}, client ID {updater['client_id']})"
+    )
+    print_progress(f"GitHub verified the configured updater: {identity}.")
+    confirmation = f"credentials belong to {slug}"
+    ownership_prompt = (
+        "After checking the provisioning records for EVERY listed location, "
+        f"type '{confirmation}' only if all credentials belong to {identity}: "
+    )
+    action["steps"].extend(
+        [f"Verified configured updater: {identity}.", ownership_prompt]
+    )
+    request_action(action)
+    if prompt(ownership_prompt).strip() != confirmation:
+        raise SetupError(
+            "legacy credential ownership confirmation is required; "
+            "no revocation was requested"
+        )
+    url = f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
+    action = {
+        "kind": SetupActionKind.ROTATE_UPDATER_KEYS,
+        "summary": f"Waiting for key rotation of verified updater {identity}",
+        "locations": locations,
+        "steps": [
+            f"Open {url} and check the App identity above.",
+            "Under Private keys, delete each previously distributed key. "
+            "This invalidates every use of those keys, including any copied key; "
+            "removing an Actions secret alone does not revoke it.",
+            "The next step will guide you through generating a fresh private key "
+            "and selecting its downloaded .pem locally. Do not paste or send "
+            "its contents.",
+            f"Return here and type 'revoked {slug}' to confirm deletion is complete.",
+        ],
+        "url": url,
+    }
+    progress(action["summary"])
+    request_action(action)
+    for line in action["steps"]:
+        print_progress(line)
+    open_url(url)
+    if prompt(f"Type 'revoked {slug}' after deleting the old keys: ").strip() != (
+        f"revoked {slug}"
+    ):
+        raise SetupError("owner key-rotation confirmation is required before migration")
+
+
+def verify_enrollment_job(
+    gh: GitHub, central: str, run: Mapping[str, Any], head: str, url: str
+) -> None:
+    attempt = run.get("run_attempt")
+    if type(attempt) is not int or attempt <= 0:
+        raise SetupError(f"enrollment run attempt is missing: {url}")
+    enrollment_jobs = []
+    page = 1
+    while True:
+        result = gh.api(
+            f"repos/{central}/actions/runs/{run['id']}/attempts/{attempt}/jobs"
+            f"?per_page=100&page={page}"
+        )
+        jobs = result.get("jobs") if isinstance(result, dict) else None
+        if not isinstance(jobs, list):
+            raise SetupError(f"enrollment job evidence is missing: {url}")
+        for job in jobs:
+            if (
+                job.get("run_id") != run["id"]
+                or ("run_attempt" in job and job["run_attempt"] != attempt)
+                or job.get("head_sha") != head
+            ):
+                raise SetupError(f"enrollment job identity does not match setup: {url}")
+            if job.get("name") == "enroll":
+                enrollment_jobs.append(job)
+        if len(jobs) < 100:
+            break
+        page += 1
+    if (
+        len(enrollment_jobs) != 1
+        or enrollment_jobs[0].get("status") != "completed"
+        or enrollment_jobs[0].get("conclusion") != "success"
+    ):
+        raise SetupError(f"the mandatory enrollment job did not succeed: {url}")
+    for name in ("Mint controller installation token", "Enroll eligible repositories"):
+        steps = [
+            step
+            for step in enrollment_jobs[0].get("steps", [])
+            if step.get("name") == name
+        ]
+        if (
+            len(steps) != 1
+            or steps[0].get("status") != "completed"
+            or steps[0].get("conclusion") != "success"
+        ):
+            raise SetupError(f"mandatory enrollment step {name} did not succeed: {url}")
+
+
+def wait_for_enrollment(
+    gh: GitHub,
+    central: str,
+    branch: str,
+    bootstrap: bool,
+    request_action: Callable[[SetupAction], None],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> None:
+    head = gh.api(f"repos/{central}/commits/{quote(branch, safe='')}")["sha"]
+    dispatched = gh.api(
+        f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
+        "POST",
+        {"ref": branch, "return_run_details": True, "inputs": {"bootstrap": bootstrap}},
+    )
+    run_id = dispatched.get("workflow_run_id") if isinstance(dispatched, dict) else None
+    if type(run_id) is not int or run_id <= 0:
+        raise SetupError("GitHub did not identify the dispatched enrollment run")
+    url = f"https://github.com/{central}/actions/runs/{run_id}"
+    phase = "bootstrap" if bootstrap else "enrollment"
+    action: SetupAction = {
+        "kind": SetupActionKind.WAIT_FOR_ENROLLMENT,
+        "summary": f"Waiting for protected {phase} run {run_id}",
+        "locations": [central],
+        "steps": [
+            "The existing protected keys stay in GitHub Actions; no local PEM "
+            "or new private key is needed.",
+            f"Setup is waiting for this exact run: {url}",
+        ],
+        "url": url,
+    }
+    request_action(action)
+    print_progress(action["summary"] + f": {url}")
+    deadline = clock() + ENROLLMENT_WAIT_SECONDS
+    while True:
+        run = gh.api(f"repos/{central}/actions/runs/{run_id}")
+        if (
+            run.get("id") != run_id
+            or run.get("head_sha") != head
+            or run.get("head_branch") != branch
+            or run.get("event") != "workflow_dispatch"
+            or run.get("path", "").split("@", 1)[0]
+            != ".github/workflows/enroll-publishers.yml"
+            or (run.get("repository") or {}).get("full_name", "").casefold()
+            != central.casefold()
+        ):
+            raise SetupError(f"enrollment run identity does not match setup: {url}")
+        if run.get("status") == "completed":
+            if run.get("conclusion") != "success":
+                raise SetupError(
+                    f"protected enrollment {run.get('conclusion')}: {url}; "
+                    "existing keys were preserved; no new key was requested"
+                )
+            verify_enrollment_job(gh, central, run, head, url)
+            break
+        if clock() >= deadline:
+            raise SetupError(
+                f"protected enrollment is still pending: {url}; "
+                "check this run before retrying; no new key was requested"
+            )
+        sleep(15)
+
+
+def resume_enrollment(
+    owner: str,
+    gh: GitHub,
+    state: Mapping[str, Any],
+    open_url: Callable[[str], Any],
+    progress: Callable[[str], None],
+    request_action: Callable[[SetupAction], None],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> bool:
+    updater, controller = state.get("app"), state.get("controller")
+    if updater is None or controller is None:
+        return False
+    check_app(updater, owner, PERMISSIONS)
+    check_app(controller, owner, CONTROLLER_PERMISSIONS)
+    variable = state.get("variable")
+    if not variable:
+        return False
+    if variable.get("value") != updater.get("client_id"):
+        raise SetupError(
+            f"organization variable {VARIABLE} does not match the verified "
+            "updater App; existing credentials were preserved"
+        )
+    central = f"{owner}/github-actions"
+    repository = gh.api(f"repos/{central}")
+    branch = repository.get("default_branch")
+    if not isinstance(branch, str) or not branch:
+        raise SetupError(f"{central} has no default branch")
+    for name, value in (
+        (CONTROLLER_VARIABLE, controller["client_id"]),
+        ("ENROLLMENT_APP_ID", str(controller["id"])),
+        ("UPDATE_APP_ID", str(updater["id"])),
+    ):
+        current = gh.optional(f"repos/{central}/actions/variables/{name}")
+        if current is None:
+            return False
+        if current.get("value") != value:
+            raise SetupError(
+                f"{central} variable {name} does not match its verified App; "
+                "existing credentials were preserved"
+            )
+    enrollment = load_enrollment()
+    bridge = enrollment.GitHub(gh.run)
+    protected = enrollment.protected(
+        bridge,
+        central,
+        branch,
+        False,
+        CENTRAL_ENVIRONMENT,
+        CENTRAL_BRANCH_VARIABLE,
+    )
+    if protected["action"] != "current":
+        return False
+    stored = {
+        item["name"]
+        for item in enrollment.pages(
+            bridge, f"repos/{central}/environments/{CENTRAL_ENVIRONMENT}/secrets"
+        )
+    }
+    if not {SECRET, "ENROLLMENT_APP_PRIVATE_KEY"} <= stored:
+        return False
+    for slug, app, permissions in (
+        (state["slug"], updater, PERMISSIONS),
+        (state["controller_slug"], controller, CONTROLLER_PERMISSIONS),
+    ):
+        ensure_installation(
+            gh, owner, slug, app["id"], permissions, open_url, sleep, clock
+        )
+    ensure_variable(gh, owner, updater["client_id"], variable)
+    progress("Resuming enrollment with existing protected credentials")
+    wait_for_enrollment(gh, central, branch, False, request_action, sleep, clock)
+    progress("Reconciling updater organization rulesets after verified enrollment")
+    ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
+    progress("Bootstrapping callers with the verified updater access")
+    wait_for_enrollment(gh, central, branch, True, request_action, sleep, clock)
+    return True
+
+
 def setup(
     owner: str,
     gh: GitHub,
@@ -689,31 +1002,30 @@ def setup(
     clock: Callable[[], float] = time.monotonic,
     controller_key: str | None = None,
     progress: Callable[[str], None] = print_progress,
+    request_action: Callable[[SetupAction], None] = lambda _: None,
 ) -> None:
     state = discover(gh, owner, progress)
     legacy_rotation = state["legacy_org_secret"] is not None or bool(
         state.get("legacy_repositories")
     )
+    if (
+        not legacy_rotation
+        and key is None
+        and controller_key is None
+        and resume_enrollment(
+            owner, gh, state, open_url, progress, request_action, sleep, clock
+        )
+    ):
+        return
     if legacy_rotation:
-        progress("Waiting for the owner to revoke exposed updater keys")
-        url = (
-            f"https://github.com/organizations/{owner}/settings/apps/"
-            f"{state['slug']}#private-key"
-        )
-        print(
-            "An unprotected publisher key was exposed to repository branches. "
-            "Revoke previously distributed publisher keys on GitHub and supply a "
-            "fresh key; removing the secret alone does not revoke copied keys.",
-            flush=True,
-        )
-        open_url(url)
-        if (
-            prompt("Type the updater App slug after revoking old keys: ").strip()
-            != state["slug"]
-        ):
+        if key is not None:
             raise SetupError(
-                "owner key-rotation confirmation is required before migration"
+                "legacy rotation requires a newly generated updater key selected "
+                "after revocation; omit --updater-key-file and use the local prompt"
             )
+        confirm_legacy_rotation(
+            owner, state, open_url, prompt, progress, request_action
+        )
     updater_slug, enroll_slug = state["slug"], state["controller_slug"]
     updater_created = None
     enroll_created = None
@@ -900,6 +1212,7 @@ def main(
             open_url=webbrowser.open,
             controller_key=enrollment_key,
             progress=reporter.progress,
+            request_action=reporter.awaiting,
         )
     except (SetupError, enrollment.EnrollmentError) as error:
         message = safe_diagnostic(str(error))
