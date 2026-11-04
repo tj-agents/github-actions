@@ -2,7 +2,9 @@
 name = "github-actions-development"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "cryptography==50.0.2",
+]
 
 [dependency-groups]
 dev = ["mypy>=2.4.0", "pytest>=9.1.1", "ruff>=0.17.1"]
@@ -11,7 +13,14 @@ dev = ["mypy>=2.4.0", "pytest>=9.1.1", "ruff>=0.17.1"]
 package = false
 
 [tool.ruff]
-include = [".github/actions/publish-update/publish.py", ".agents/tests/test_publish_update.py"]
+include = [
+  ".github/actions/publish-update/publish.py",
+  ".agents/tests/test_publish_update.py",
+  ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
+  ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
+  ".agents/tests/test_owner_setup.py",
+  ".agents/tests/test_enrollment.py",
+]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -20,7 +29,14 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "P
 [tool.mypy]
 strict = true
 warn_unreachable = true
-files = [".github/actions/publish-update/publish.py", ".agents/tests/test_publish_update.py"]
+files = [
+  ".github/actions/publish-update/publish.py",
+  ".agents/tests/test_publish_update.py",
+  ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
+  ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
+  ".agents/tests/test_owner_setup.py",
+  ".agents/tests/test_enrollment.py",
+]
 
 [[tool.mypy.overrides]]
 module = ["test_merge_policy"]
