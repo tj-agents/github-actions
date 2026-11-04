@@ -822,7 +822,7 @@ def verify_enrollment_job(
         for job in jobs:
             if (
                 job.get("run_id") != run["id"]
-                or job.get("run_attempt") != attempt
+                or ("run_attempt" in job and job["run_attempt"] != attempt)
                 or job.get("head_sha") != head
             ):
                 raise SetupError(f"enrollment job identity does not match setup: {url}")
@@ -855,12 +855,12 @@ def wait_for_enrollment(
     gh: GitHub,
     central: str,
     branch: str,
-    head: str,
     bootstrap: bool,
     request_action: Callable[[SetupAction], None],
     sleep: Callable[[float], None],
     clock: Callable[[], float],
 ) -> None:
+    head = gh.api(f"repos/{central}/commits/{quote(branch, safe='')}")["sha"]
     dispatched = gh.api(
         f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
         "POST",
@@ -983,13 +983,12 @@ def resume_enrollment(
             gh, owner, slug, app["id"], permissions, open_url, sleep, clock
         )
     ensure_variable(gh, owner, updater["client_id"], variable)
-    head = gh.api(f"repos/{central}/commits/{quote(branch, safe='')}")["sha"]
     progress("Resuming enrollment with existing protected credentials")
-    wait_for_enrollment(gh, central, branch, head, False, request_action, sleep, clock)
+    wait_for_enrollment(gh, central, branch, False, request_action, sleep, clock)
     progress("Reconciling updater organization rulesets after verified enrollment")
     ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
     progress("Bootstrapping callers with the verified updater access")
-    wait_for_enrollment(gh, central, branch, head, True, request_action, sleep, clock)
+    wait_for_enrollment(gh, central, branch, True, request_action, sleep, clock)
     return True
 
 
