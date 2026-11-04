@@ -98,17 +98,38 @@ runs the locked setup directly in their terminal:
 uv run --locked --script "<absolute-skill-directory>/scripts/owner_setup.py" --owner tj-agents --apply --result-file "<absolute-local-result-file>"
 ```
 
-Apply requires the owner's own GitHub sign-in and refuses agent sessions and token overrides. The owner
-completes App creation, installation and private-key prompts in that interactive window. The agent does
-not sign in for the owner or read private keys. Setup shows discovery and setup progress per repository.
+Apply requires the owner's own GitHub sign-in and refuses agent sessions and token overrides. Incomplete
+initial provisioning uses the App manifest, installation and local private-key flow in that interactive
+window. The agent does not sign in for the owner or read private keys. Setup shows discovery and setup
+progress per repository.
+
+When discovery finds no legacy secret metadata, an existing setup resumes through its protected central
+credentials after verifying the existing Apps, organization and repository identities, exact central environment
+default-branch protections and both protected secret metadata records. Setup dispatches the existing
+`enroll-publishers.yml` on the central repository's current default branch, waits for the exact returned
+run to succeed, then reconciles organization rulesets. Before dispatch, setup checks the existing App
+installations. Valid installations require no browser action. If an installation needs repository access
+or permission acceptance, setup opens its exact installation settings page and waits for the owner. Both
+cases reuse the protected keys without local PEM or key generation prompts. A workflow failure, timeout
+or mismatched run stops with the structured run URL;
+it never falls through to requesting fresh keys. Secret metadata alone proves neither a usable key nor
+installed runtime adoption; the enrollment workflow must authenticate the stored credentials.
+
+```text
+Existing protected provisioning verified, no legacy secret metadata:
+dispatch enroll-publishers.yml -> waiting_for_enrollment with the exact returned run URL
+matching run succeeds -> reconcile organization rulesets -> complete
+run fails or times out -> failed with run URL, no new key request
+```
 
 The native `!` command returning zero proves only that the Windows launcher returned successfully. Read
 the exact result file, whose atomic JSON contains `schema_version: 1`, `owner`, `pid`, `state`, `phase`,
 `exit_code`, `observed_at` and optional `error` and `action` fields. An action contains `kind`, `summary`,
-`locations`, `steps` and `url`; its kind is `identify_legacy_app` or `rotate_updater_keys`. Relay the returned
-action's summary, locations, steps and URL exactly, without asking for console pastes. Reuse a running
-attempt and its result file; do not restart it to pick up newer scripts. Diagnose a failed attempt from its
-phase and error. A missing result or a `running` state leaves setup unverified. Only `complete` for the
+`locations`, `steps` and `url`; its kind is `identify_legacy_app`, `rotate_updater_keys` or
+`waiting_for_enrollment`. Relay the returned action's summary, locations, steps and URL exactly, without
+asking for console pastes. Reuse a running attempt and its result file; do not restart it to pick up newer
+scripts. Diagnose a failed attempt from its phase and error. A missing result or a `running` state leaves
+setup unverified. Only `complete` for the
 requested owner with `exit_code: 0` proves setup returned success; verified CI and publication remain
 rollout acceptance conditions.
 

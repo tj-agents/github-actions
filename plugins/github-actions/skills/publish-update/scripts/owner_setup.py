@@ -50,6 +50,7 @@ CENTRAL_BRANCH_VARIABLE = "TJ_AGENTS_ENROLLMENT_BRANCH"
 GH_TIMEOUT_SECONDS = 90
 WAIT_SECONDS = 300
 POLL_SECONDS = 5
+ENROLLMENT_WAIT_SECONDS = 3600
 if sys.platform == "win32":
     NO_WINDOW = subprocess.CREATE_NO_WINDOW
 else:
@@ -85,6 +86,7 @@ class SetupState(StrEnum):
 class SetupActionKind(StrEnum):
     IDENTIFY_LEGACY_APP = "identify_legacy_app"
     ROTATE_UPDATER_KEYS = "rotate_updater_keys"
+    WAIT_FOR_ENROLLMENT = "waiting_for_enrollment"
 
 
 class SetupAction(TypedDict):
@@ -801,6 +803,131 @@ def confirm_legacy_rotation(
         raise SetupError("owner key-rotation confirmation is required before migration")
 
 
+def resume_enrollment(
+    owner: str,
+    gh: GitHub,
+    state: Mapping[str, Any],
+    open_url: Callable[[str], Any],
+    progress: Callable[[str], None],
+    request_action: Callable[[SetupAction], None],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> bool:
+    updater, controller = state.get("app"), state.get("controller")
+    if updater is None or controller is None:
+        return False
+    check_app(updater, owner, PERMISSIONS)
+    check_app(controller, owner, CONTROLLER_PERMISSIONS)
+    variable = state.get("variable")
+    if not variable:
+        return False
+    if variable.get("value") != updater.get("client_id"):
+        raise SetupError(
+            f"organization variable {VARIABLE} does not match the verified "
+            "updater App; existing credentials were preserved"
+        )
+    central = f"{owner}/github-actions"
+    repository = gh.api(f"repos/{central}")
+    branch = repository.get("default_branch")
+    if not isinstance(branch, str) or not branch:
+        raise SetupError(f"{central} has no default branch")
+    for name, value in (
+        (CONTROLLER_VARIABLE, controller["client_id"]),
+        ("ENROLLMENT_APP_ID", str(controller["id"])),
+        ("UPDATE_APP_ID", str(updater["id"])),
+    ):
+        current = gh.optional(f"repos/{central}/actions/variables/{name}")
+        if current is None:
+            return False
+        if current.get("value") != value:
+            raise SetupError(
+                f"{central} variable {name} does not match its verified App; "
+                "existing credentials were preserved"
+            )
+    enrollment = load_enrollment()
+    bridge = enrollment.GitHub(gh.run)
+    protected = enrollment.protected(
+        bridge,
+        central,
+        branch,
+        False,
+        CENTRAL_ENVIRONMENT,
+        CENTRAL_BRANCH_VARIABLE,
+    )
+    if protected["action"] != "current":
+        return False
+    stored = {
+        item["name"]
+        for item in enrollment.pages(
+            bridge, f"repos/{central}/environments/{CENTRAL_ENVIRONMENT}/secrets"
+        )
+    }
+    if not {SECRET, "ENROLLMENT_APP_PRIVATE_KEY"} <= stored:
+        return False
+    for slug, app, permissions in (
+        (state["slug"], updater, PERMISSIONS),
+        (state["controller_slug"], controller, CONTROLLER_PERMISSIONS),
+    ):
+        ensure_installation(
+            gh, owner, slug, app["id"], permissions, open_url, sleep, clock
+        )
+    ensure_variable(gh, owner, updater["client_id"], variable)
+    head = gh.api(f"repos/{central}/commits/{quote(branch, safe='')}")["sha"]
+    progress("Resuming enrollment with existing protected credentials")
+    dispatched = gh.api(
+        f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
+        "POST",
+        {"ref": branch, "return_run_details": True},
+    )
+    run_id = dispatched.get("workflow_run_id") if isinstance(dispatched, dict) else None
+    if type(run_id) is not int or run_id <= 0:
+        raise SetupError("GitHub did not identify the dispatched enrollment run")
+    url = f"https://github.com/{central}/actions/runs/{run_id}"
+    action: SetupAction = {
+        "kind": SetupActionKind.WAIT_FOR_ENROLLMENT,
+        "summary": f"Waiting for protected enrollment run {run_id}",
+        "locations": [central],
+        "steps": [
+            "The existing protected keys stay in GitHub Actions; no local PEM "
+            "or new private key is needed.",
+            f"Setup is waiting for this exact run: {url}",
+        ],
+        "url": url,
+    }
+    request_action(action)
+    print_progress(action["summary"] + f": {url}")
+    deadline = clock() + ENROLLMENT_WAIT_SECONDS
+    while True:
+        run = gh.api(f"repos/{central}/actions/runs/{run_id}")
+        if (
+            run.get("id") != run_id
+            or run.get("head_sha") != head
+            or run.get("head_branch") != branch
+            or run.get("event") != "workflow_dispatch"
+            or run.get("path", "").split("@", 1)[0]
+            != ".github/workflows/enroll-publishers.yml"
+            or (run.get("repository") or {}).get("full_name", "").casefold()
+            != central.casefold()
+        ):
+            raise SetupError(f"enrollment run identity does not match setup: {url}")
+        if run.get("status") == "completed":
+            if run.get("conclusion") != "success":
+                raise SetupError(
+                    f"protected enrollment {run.get('conclusion')}: {url}; "
+                    "existing keys were preserved; no new key was requested"
+                )
+            break
+        if clock() >= deadline:
+            raise SetupError(
+                f"protected enrollment is still pending: {url}; "
+                "check this run before retrying; no new key was requested"
+            )
+        sleep(15)
+    progress("Reconciling updater organization rulesets after verified enrollment")
+    ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
+    return True
+
+
 def setup(
     owner: str,
     gh: GitHub,
@@ -817,6 +944,15 @@ def setup(
     legacy_rotation = state["legacy_org_secret"] is not None or bool(
         state.get("legacy_repositories")
     )
+    if (
+        not legacy_rotation
+        and key is None
+        and controller_key is None
+        and resume_enrollment(
+            owner, gh, state, open_url, progress, request_action, sleep, clock
+        )
+    ):
+        return
     if legacy_rotation:
         if key is not None:
             raise SetupError(
