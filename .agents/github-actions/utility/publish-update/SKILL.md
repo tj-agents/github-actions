@@ -65,15 +65,34 @@ does not validate owner authorization:
 python -B scripts/owner_setup.py --owner tj-agents
 ```
 
-For Windows, give the owner this command in the CLI's native `!` Bash entry. Resolve the skill directory
-and a new local result file to absolute paths before supplying the command:
+For a new Windows attempt, use `cli:clip`'s existing `user_command.py` mechanism to prepare the owner's
+native `!` Bash command. Resolve the skill directory, a new local result file and the command specification
+to absolute paths. Write a specification like:
 
-```bash
-!env -u TJ_AGENT -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR -u GH_PROMPT_DISABLED powershell.exe -NoProfile -File "<absolute-skill-directory>/scripts/owner_setup.ps1" -Owner tj-agents -ResultFile "<absolute-local-result-file>"
+```json
+{
+  "shell": "bash",
+  "unset": ["TJ_AGENT", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GH_PROMPT_DISABLED"],
+  "steps": [{
+    "argv": [
+      "powershell.exe", "-NoProfile", "-File",
+      "<absolute-skill-directory>/scripts/owner_setup.ps1",
+      "-Owner", "tj-agents", "-ResultFile", "<absolute-local-result-file>"
+    ]
+  }]
+}
 ```
 
-The launcher opens an interactive owner PowerShell window and invokes the locked Python setup. On
-Linux or macOS, the owner runs the locked setup directly in their terminal:
+Issue it through the installed CLI helper at `~/.agents-state/bin/cli/user_command.py`:
+
+```text
+python -B "<installed-cli-directory>/user_command.py" issue --spec "<absolute-command-specification>"
+```
+
+Relay the helper's exact native command; it constructs the command, copies it as plain text and verifies
+the clipboard. The owner executes it. The agent does not execute the owner command. The launcher opens
+an interactive owner PowerShell window and invokes the locked Python setup. On Linux or macOS, the owner
+runs the locked setup directly in their terminal:
 
 ```bash
 uv run --locked --script "<absolute-skill-directory>/scripts/owner_setup.py" --owner tj-agents --apply --result-file "<absolute-local-result-file>"
@@ -85,11 +104,30 @@ not sign in for the owner or read private keys. Setup shows discovery and setup 
 
 The native `!` command returning zero proves only that the Windows launcher returned successfully. Read
 the exact result file, whose atomic JSON contains `schema_version: 1`, `owner`, `pid`, `state`, `phase`,
-`exit_code`, `observed_at` and an optional `error`. Reuse a running attempt and its result file; do not
-blindly relaunch or ask the owner to paste terminal output. Diagnose a failed attempt from its phase and
-error. A missing result or a `running` state leaves setup unverified. Only `complete` for the requested
-owner with `exit_code: 0` proves setup returned success; verified CI and publication remain rollout
-acceptance conditions.
+`exit_code`, `observed_at` and optional `error` and `action` fields. An action contains `kind`, `summary`,
+`locations`, `steps` and `url`; its kind is `identify_legacy_app` or `rotate_updater_keys`. Relay the returned
+action's summary, locations, steps and URL exactly, without asking for console pastes. Reuse a running
+attempt and its result file; do not restart it to pick up newer scripts. Diagnose a failed attempt from its
+phase and error. A missing result or a `running` state leaves setup unverified. Only `complete` for the
+requested owner with `exit_code: 0` proves setup returned success; verified CI and publication remain
+rollout acceptance conditions.
+
+Legacy secret metadata indicates possible exposure; neither a secret name nor its location proves the
+issuing App's identity or that a key was copied. Setup verifies the updater App's organization ownership,
+permissions and organization `UPDATE_APP_CLIENT_ID` variable. The owner must then identify all listed
+credentials from original provisioning records and confirm `credentials belong to <verified-app-slug>`.
+Missing, mismatched or unresolved identity stops setup before any revocation request. Only after that
+confirmation does setup open the verified App's specific private-key page, request deletion of previously
+distributed keys and require `revoked <verified-app-slug>`. Deleting an Actions secret cannot revoke a copied key.
+Generate a new key after revocation and select the downloaded local PEM at the next prompt; legacy
+rotation refuses a pre-supplied `--updater-key-file`. Never read, paste or send the PEM contents.
+
+```text
+Result: state=running, action.kind=identify_legacy_app, action.url=null
+Relay: the returned summary, each credential location and the provisioning-record steps.
+If ownership cannot be established: stop without requesting key deletion.
+After owner confirmation: relay rotate_updater_keys and its verified App URL and exact steps.
+```
 
 The locked environment supplies its cryptographic verifier. Setup configures `<owner>-pin-updater` for
 contents, pull requests and workflows write, plus a
@@ -113,9 +151,7 @@ branch restrictions before uploading a key, preserves additional deployment prot
 each declared merge policy with the verified updater App bypass. Each supplied key authenticates as its
 intended App before upload.
 Bootstrap removes legacy unprotected updater secrets after replacements are read back and before new
-bypass grants. An organization-wide exposure requires the owner to revoke previously distributed keys
-and supply a fresh one; deleting a secret cannot revoke a copied key. Key values never appear in
-diagnostics or local enrollment state.
+bypass grants. Key values never appear in diagnostics or local enrollment state.
 
 Trusted central automation uses `scripts/enrollment.py` to enroll repositories and open a caller-bootstrap
 pull request through the same implementation. It checks only the central default branch, uses separate

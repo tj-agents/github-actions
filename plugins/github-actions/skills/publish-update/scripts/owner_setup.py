@@ -32,7 +32,7 @@ from enum import StrEnum
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import parse_qs, quote, urlsplit
 
 PERMISSIONS = {"contents": "write", "pull_requests": "write", "workflows": "write"}
@@ -82,6 +82,14 @@ class SetupState(StrEnum):
     FAILED = "failed"
 
 
+class SetupAction(TypedDict):
+    kind: str
+    summary: str
+    locations: list[str]
+    steps: list[str]
+    url: str | None
+
+
 def safe_diagnostic(message: str) -> str:
     message = re.sub(
         r"app-manifests/[^/\s]+/conversions",
@@ -111,11 +119,18 @@ class SetupReporter:
         self.owner = owner
         self.result_file = result_file
         self.phase = "Starting owner setup"
+        self.action: SetupAction | None = None
 
     def progress(self, message: str) -> None:
+        self.action = None
         self.phase = message
         self._write(SetupState.RUNNING, None)
         print_progress(message)
+
+    def awaiting(self, action: SetupAction) -> None:
+        self.action = action
+        self.phase = action["summary"]
+        self._write(SetupState.RUNNING, None)
 
     def finish(self, exit_code: int, error: str | None = None) -> None:
         self._write(
@@ -140,6 +155,8 @@ class SetupReporter:
         }
         if error is not None:
             result["error"] = safe_diagnostic(error)
+        if self.action is not None:
+            result["action"] = self.action
         self.result_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.result_file.with_name(
             f".{self.result_file.name}.{os.getpid()}.tmp"
@@ -679,6 +696,105 @@ def ensure_org_rulesets(
     return covered
 
 
+def confirm_legacy_rotation(
+    owner: str,
+    state: Mapping[str, Any],
+    open_url: Callable[[str], Any],
+    prompt: Callable[[str], str],
+    progress: Callable[[str], None],
+    request_action: Callable[[SetupAction], None],
+) -> None:
+    locations = []
+    if state["legacy_org_secret"] is not None:
+        locations.append(
+            f"Organization {owner}: https://github.com/organizations/{owner}"
+            f"/settings/secrets/actions/{SECRET}"
+        )
+    for location in state.get("legacy_repositories", []):
+        parts = location.split("/")
+        repository = "/".join(parts[:2])
+        settings = "environments" if len(parts) == 3 else "secrets/actions"
+        locations.append(
+            f"{location}: https://github.com/{repository}/settings/{settings}"
+        )
+    action: SetupAction = {
+        "kind": "identify_legacy_app",
+        "summary": "Verify the issuing App for legacy updater credentials",
+        "locations": locations,
+        "steps": [
+            f"Found {SECRET} metadata at the listed locations. Secret values "
+            "were not read; their name does not identify the issuing App or "
+            "prove that a key was copied.",
+            "Use the original provisioning records to identify every App whose "
+            "keys were distributed there. Do not revoke an unrelated bot App's keys.",
+        ],
+        "url": None,
+    }
+    progress(action["summary"])
+    request_action(action)
+    for line in [*action["locations"], *action["steps"]]:
+        print_progress(line)
+    updater = state.get("app")
+    if updater is None:
+        raise SetupError(
+            "legacy credential identity is unresolved: the expected updater App "
+            "does not exist. Identify the issuing Apps from provisioning records "
+            "before retiring their credentials; no revocation was requested"
+        )
+    check_app(updater, owner, PERMISSIONS)
+    variable = state.get("variable")
+    if not variable or variable.get("value") != updater.get("client_id"):
+        raise SetupError(
+            f"legacy credential identity is unresolved: organization {VARIABLE} "
+            "does not match the verified updater App. Reconcile provisioning "
+            "records and configuration before retrying; no revocation was requested"
+        )
+    slug = state["slug"]
+    identity = (
+        f"{owner}/{slug} (App ID {updater['id']}, client ID {updater['client_id']})"
+    )
+    print_progress(f"GitHub verified the configured updater: {identity}.")
+    confirmation = f"credentials belong to {slug}"
+    ownership_prompt = (
+        "After checking the provisioning records for EVERY listed location, "
+        f"type '{confirmation}' only if all credentials belong to {identity}: "
+    )
+    action["steps"].extend(
+        [f"Verified configured updater: {identity}.", ownership_prompt]
+    )
+    request_action(action)
+    if prompt(ownership_prompt).strip() != confirmation:
+        raise SetupError(
+            "legacy credential ownership confirmation is required; "
+            "no revocation was requested"
+        )
+    url = f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
+    action = {
+        "kind": "rotate_updater_keys",
+        "summary": f"Waiting for key rotation of verified updater {identity}",
+        "locations": locations,
+        "steps": [
+            f"Open {url} and check the App identity above.",
+            "Under Private keys, delete each previously distributed key. "
+            "This invalidates every use of those keys, including any copied key; "
+            "removing an Actions secret alone does not revoke it.",
+            "Generate a new private key after deletion and keep the downloaded "
+            ".pem locally for the next prompt. Do not paste or send its contents.",
+            f"Return here and type 'revoked {slug}' to confirm deletion is complete.",
+        ],
+        "url": url,
+    }
+    progress(action["summary"])
+    request_action(action)
+    for line in action["steps"]:
+        print_progress(line)
+    open_url(url)
+    if prompt(f"Type 'revoked {slug}' after deleting the old keys: ").strip() != (
+        f"revoked {slug}"
+    ):
+        raise SetupError("owner key-rotation confirmation is required before migration")
+
+
 def setup(
     owner: str,
     gh: GitHub,
@@ -689,31 +805,21 @@ def setup(
     clock: Callable[[], float] = time.monotonic,
     controller_key: str | None = None,
     progress: Callable[[str], None] = print_progress,
+    request_action: Callable[[SetupAction], None] = lambda _: None,
 ) -> None:
     state = discover(gh, owner, progress)
     legacy_rotation = state["legacy_org_secret"] is not None or bool(
         state.get("legacy_repositories")
     )
     if legacy_rotation:
-        progress("Waiting for the owner to revoke exposed updater keys")
-        url = (
-            f"https://github.com/organizations/{owner}/settings/apps/"
-            f"{state['slug']}#private-key"
-        )
-        print(
-            "An unprotected publisher key was exposed to repository branches. "
-            "Revoke previously distributed publisher keys on GitHub and supply a "
-            "fresh key; removing the secret alone does not revoke copied keys.",
-            flush=True,
-        )
-        open_url(url)
-        if (
-            prompt("Type the updater App slug after revoking old keys: ").strip()
-            != state["slug"]
-        ):
+        if key is not None:
             raise SetupError(
-                "owner key-rotation confirmation is required before migration"
+                "legacy rotation requires a newly generated updater key selected "
+                "after revocation; omit --updater-key-file and use the local prompt"
             )
+        confirm_legacy_rotation(
+            owner, state, open_url, prompt, progress, request_action
+        )
     updater_slug, enroll_slug = state["slug"], state["controller_slug"]
     updater_created = None
     enroll_created = None
@@ -900,6 +1006,7 @@ def main(
             open_url=webbrowser.open,
             controller_key=enrollment_key,
             progress=reporter.progress,
+            request_action=reporter.awaiting,
         )
     except (SetupError, enrollment.EnrollmentError) as error:
         message = safe_diagnostic(str(error))
