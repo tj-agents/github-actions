@@ -148,16 +148,20 @@ issuing App's identity or that a key was copied. Setup verifies the updater App'
 permissions and organization `UPDATE_APP_CLIENT_ID` variable. The owner must then identify all listed
 credentials from original provisioning records and confirm `credentials belong to <verified-app-slug>`.
 Missing, mismatched or unresolved identity stops setup before any revocation request. Only after that
-confirmation does setup open the verified App's specific private-key page, request deletion of previously
-distributed keys and require `revoked <verified-app-slug>`. Deleting an Actions secret cannot revoke a copied key.
-Generate a new key after revocation and select the downloaded local PEM at the next prompt; legacy
-rotation refuses a pre-supplied `--updater-key-file`. Never read, paste or send the PEM contents.
+confirmation does setup open the verified App's specific private-key page and guide rotation of previously
+distributed keys. In Credentials -> Key pairs -> New key,
+create a replacement first and keep its downloaded PEM. Delete all older keys while keeping that
+replacement, then confirm revocation. Deleting an Actions secret cannot revoke a copied key. The next
+local prompt selects that same replacement PEM without generating another key; legacy rotation refuses
+a pre-supplied `--updater-key-file`. Never read, paste or send the PEM contents.
 
 ```text
 Result: state=running, action.kind=identify_legacy_app, action.url=null
 Relay: the returned summary, each credential location and the provisioning-record steps.
 If ownership cannot be established: stop without requesting key deletion.
 After owner confirmation: relay rotate_updater_keys and its verified App URL and exact steps.
+New key -> keep downloaded replacement PEM -> delete all older keys, keep replacement -> revoked <slug>
+Next local prompt: select that replacement PEM; no second key generation.
 ```
 
 The locked environment supplies its cryptographic verifier. Setup configures `<owner>-pin-updater` for
