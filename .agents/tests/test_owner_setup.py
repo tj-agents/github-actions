@@ -550,6 +550,14 @@ def test_rotation_action_is_readable_at_each_prompt_without_console_relay(
         assert len(item["action"]["locations"]) == 3
         assert "App ID 42" in json.dumps(item["action"])
         assert "Iv1.updater" in json.dumps(item["action"])
+    steps = observed[1]["action"]["steps"]
+    generate = next(i for i, step in enumerate(steps) if "New key" in step)
+    download = next(i for i, step in enumerate(steps) if ".pem" in step)
+    delete = next(i for i, step in enumerate(steps) if step.startswith("Delete"))
+    confirm = next(i for i, step in enumerate(steps) if "revoked " in step)
+    assert generate < download < delete < confirm
+    assert "Credentials > Key pairs > New key" in steps[generate]
+    assert "KEEPING the replacement" in steps[delete]
     reporter.finish(1, "owner stopped")
     assert (
         json.loads(result_file.read_text(encoding="utf-8"))["action"]
@@ -564,6 +572,8 @@ def test_legacy_exposure_requires_owner_key_revocation_before_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
+    select_key = mock.Mock()
+    monkeypatch.setattr(owner_setup, "app_key", select_key)
     gh = mock.Mock()
     responses = iter(["credentials belong to tj-agents-pin-updater", "not confirmed"])
     with pytest.raises(owner_setup.SetupError, match="key-rotation confirmation"):
@@ -572,6 +582,88 @@ def test_legacy_exposure_requires_owner_key_revocation_before_migration(
         )
     gh.api.assert_not_called()
     gh.set_secret.assert_not_called()
+    select_key.assert_not_called()
+
+
+def test_legacy_rotation_selects_its_existing_replacement_after_confirmation(
+    legacy_state: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    legacy_state["controller_slug"] = "tj-agents-enrollment-controller"
+    legacy_state["controller"] = {
+        "id": 90,
+        "client_id": "Iv1.controller",
+        "owner": {"login": "tj-agents"},
+        "permissions": owner_setup.CONTROLLER_PERMISSIONS,
+    }
+    monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
+    replacement = "-----BEGIN PRIVATE KEY-----\ndGVzdA==\n-----END PRIVATE KEY-----\n"
+    path = tmp_path / "replacement.pem"
+    path.write_text(replacement, encoding="utf-8")
+    browser, gh = mock.Mock(), mock.Mock()
+    prompts: list[str] = []
+
+    def respond(message: str) -> str:
+        prompts.append(message)
+        if len(prompts) == 1:
+            browser.assert_not_called()
+            return "credentials belong to tj-agents-pin-updater"
+        browser.assert_called_once()
+        if len(prompts) == 2:
+            return "revoked tj-agents-pin-updater"
+        assert "replacement" in message
+        return str(path)
+
+    bridge = owner_setup.load_enrollment()
+    verify = mock.Mock(side_effect=bridge.EnrollmentError("replacement rejected"))
+    monkeypatch.setattr(bridge, "verify_app_key", verify)
+    with pytest.raises(bridge.EnrollmentError, match="replacement rejected"):
+        owner_setup.setup(
+            "tj-agents",
+            gh,
+            controller_key=replacement,
+            open_url=browser,
+            prompt=respond,
+        )
+    assert len(prompts) == 3
+    browser.assert_called_once_with(
+        "https://github.com/organizations/tj-agents/settings/apps/"
+        "tj-agents-pin-updater#private-key"
+    )
+    verify.assert_called_once_with("tj-agents", 42, "Iv1.updater", replacement)
+    assert "Generate a private key" not in capsys.readouterr().out
+    gh.api.assert_not_called()
+    gh.set_secret.assert_not_called()
+
+
+@pytest.mark.parametrize("source", ["existing_app", "manifest", "supplied"])
+def test_app_key_generates_only_for_an_existing_app_without_a_key(
+    source: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pem = "-----BEGIN PRIVATE KEY-----\ndGVzdA==\n-----END PRIVATE KEY-----\n"
+    path = tmp_path / "download.pem"
+    path.write_text(pem, encoding="utf-8")
+    browser, prompt = mock.Mock(), mock.Mock(return_value=str(path))
+    assert (
+        owner_setup.app_key(
+            "tj-agents",
+            "tj-agents-enrollment-controller",
+            pem if source == "supplied" else None,
+            {"pem": pem} if source == "manifest" else None,
+            browser,
+            prompt,
+        )
+        == pem
+    )
+    if source == "existing_app":
+        browser.assert_called_once()
+        prompt.assert_called_once()
+        assert "Credentials > Key pairs > New key" in capsys.readouterr().out
+    else:
+        browser.assert_not_called()
+        prompt.assert_not_called()
 
 
 def test_legacy_rotation_refuses_a_key_selected_before_revocation(
@@ -613,7 +705,7 @@ def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
         "variable": {"value": "Iv1.updater"},
     }
     monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
-    monkeypatch.setattr(owner_setup, "app_key", lambda *_: "unused-test-key")
+    monkeypatch.setattr(owner_setup, "app_key", lambda *_, **__: "unused-test-key")
     monkeypatch.setattr(owner_setup, "ensure_installation", lambda *_: None)
     monkeypatch.setattr(owner_setup, "ensure_variable", lambda *_: None)
     observed: list[tuple[str, bool]] = []
@@ -766,7 +858,7 @@ def test_empty_organization_rulesets_do_not_skip_repository_protections(
         "variable": None,
     }
     monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
-    monkeypatch.setattr(owner_setup, "app_key", lambda *_: "fixture-key")
+    monkeypatch.setattr(owner_setup, "app_key", lambda *_, **__: "fixture-key")
     for name in (
         "ensure_installation",
         "ensure_variable",
