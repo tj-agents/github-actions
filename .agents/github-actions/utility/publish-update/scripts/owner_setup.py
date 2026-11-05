@@ -609,19 +609,27 @@ def app_key(
     created: Mapping[str, Any] | None,
     open_url: Callable[[str], Any],
     prompt: Callable[[str], str],
+    *,
+    replacement_ready: bool = False,
 ) -> str:
     if supplied:
         return read_key(supplied)
     if created and created.get("pem"):
         return read_key(created["pem"])
-    url = f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
-    print(
-        f"Generate a private key for {slug} (Private keys > Generate a private key): "
-        f"{url}",
-        flush=True,
-    )
-    open_url(url)
-    path = prompt(f"Path to the downloaded {slug} .pem file: ").strip().strip('"')
+    if replacement_ready:
+        message = f"Path to the replacement {slug} .pem downloaded before revocation: "
+    else:
+        url = (
+            f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
+        )
+        print(
+            f"Generate a private key for {slug} (Credentials > Key pairs > New key): "
+            f"{url}",
+            flush=True,
+        )
+        open_url(url)
+        message = f"Path to the downloaded {slug} .pem file: "
+    path = prompt(message).strip().strip('"')
     try:
         return read_key(Path(path).expanduser().read_text(encoding="utf-8"))
     except OSError as error:
@@ -782,13 +790,15 @@ def confirm_legacy_rotation(
         "locations": locations,
         "steps": [
             f"Open {url} and check the App identity above.",
-            "Under Private keys, delete each previously distributed key. "
+            "Go to Credentials > Key pairs > New key to generate the replacement "
+            "before deleting any old key.",
+            "Keep the newly downloaded replacement .pem file for the next local "
+            "prompt. Do not paste or send its contents.",
+            "Delete all older keys while KEEPING the replacement key just created. "
             "This invalidates every use of those keys, including any copied key; "
             "removing an Actions secret alone does not revoke it.",
-            "The next step will guide you through generating a fresh private key "
-            "and selecting its downloaded .pem locally. Do not paste or send "
-            "its contents.",
-            f"Return here and type 'revoked {slug}' to confirm deletion is complete.",
+            f"Return here and type 'revoked {slug}' to confirm all older keys were "
+            "deleted and the replacement key was kept.",
         ],
         "url": url,
     }
@@ -797,9 +807,10 @@ def confirm_legacy_rotation(
     for line in action["steps"]:
         print_progress(line)
     open_url(url)
-    if prompt(f"Type 'revoked {slug}' after deleting the old keys: ").strip() != (
-        f"revoked {slug}"
-    ):
+    if prompt(
+        f"Type 'revoked {slug}' after keeping the replacement "
+        "and deleting all old keys: "
+    ).strip() != (f"revoked {slug}"):
         raise SetupError("owner key-rotation confirmation is required before migration")
 
 
@@ -1046,7 +1057,15 @@ def setup(
     check_app(updater, owner, PERMISSIONS)
     check_app(controller, owner, CONTROLLER_PERMISSIONS)
     progress("Obtaining and verifying the updater and controller keys locally")
-    updater_key = app_key(owner, updater_slug, key, updater_created, open_url, prompt)
+    updater_key = app_key(
+        owner,
+        updater_slug,
+        key,
+        updater_created,
+        open_url,
+        prompt,
+        replacement_ready=legacy_rotation,
+    )
     controller_key = app_key(
         owner, enroll_slug, controller_key, enroll_created, open_url, prompt
     )
