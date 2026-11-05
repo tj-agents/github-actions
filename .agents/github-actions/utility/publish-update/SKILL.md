@@ -146,21 +146,25 @@ rollout acceptance conditions.
 Legacy secret metadata indicates possible exposure; neither a secret name nor its location proves the
 issuing App's identity or that a key was copied. Setup verifies the updater App's organization ownership,
 permissions and organization `UPDATE_APP_CLIENT_ID` variable. The owner must then identify all listed
-credentials from original provisioning records and confirm `credentials belong to <verified-app-slug>`.
+credentials from original provisioning records and select `1` to confirm they all belong to the displayed
+verified App, or select `2` to cancel safely. Invalid or blank input asks again without remote writes.
 Missing, mismatched or unresolved identity stops setup before any revocation request. Only after that
 confirmation does setup open the verified App's specific private-key page and guide rotation of previously
 distributed keys. In Credentials -> Key pairs -> New key,
 create a replacement first and keep its downloaded PEM. Delete all older keys while keeping that
 replacement, then confirm revocation. Deleting an Actions secret cannot revoke a copied key. The next
-local prompt selects that same replacement PEM without generating another key; legacy rotation refuses
-a pre-supplied `--updater-key-file`. Never read, paste or send the PEM contents.
+local prompt selects that same replacement PEM without generating another key. At the rotation prompt,
+select `1` only after that work is complete; select `2` to cancel before credential migration. Invalid or
+blank input asks again without remote writes. Legacy rotation refuses a pre-supplied `--updater-key-file`.
+Never read, paste or send the PEM contents.
 
 ```text
 Result: state=running, action.kind=identify_legacy_app, action.url=null
 Relay: the returned summary, each credential location and the provisioning-record steps.
-If ownership cannot be established: stop without requesting key deletion.
-After owner confirmation: relay rotate_updater_keys and its verified App URL and exact steps.
-New key -> keep downloaded replacement PEM -> delete all older keys, keep replacement -> revoked <slug>
+Choice 1: every listed credential belongs to the displayed verified App.
+Choice 2: cancel safely without requesting key deletion.
+After choice 1: relay rotate_updater_keys and its verified App URL and exact steps.
+New key -> keep downloaded replacement PEM -> delete all older keys, keep replacement -> choice 1.
 Next local prompt: select that replacement PEM; no second key generation.
 ```
 

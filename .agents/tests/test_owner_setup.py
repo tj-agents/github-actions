@@ -504,34 +504,42 @@ def test_legacy_identity_is_checked_before_opening_any_key_settings(
     gh.set_secret.assert_not_called()
 
 
-def test_legacy_metadata_does_not_establish_key_ownership(
+def test_legacy_owner_can_cancel_before_browser_or_mutation(
     legacy_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(owner_setup, "discover", lambda *_: legacy_state)
-    browser, prompt = mock.Mock(), mock.Mock(return_value="tj-agents-pin-updater")
-    with pytest.raises(owner_setup.SetupError, match="ownership confirmation"):
-        owner_setup.setup("tj-agents", mock.Mock(), open_url=browser, prompt=prompt)
+    browser, prompt, gh = mock.Mock(), mock.Mock(return_value="2"), mock.Mock()
+    with pytest.raises(
+        owner_setup.SetupError, match="owner cancelled legacy credential"
+    ):
+        owner_setup.setup("tj-agents", gh, open_url=browser, prompt=prompt)
     browser.assert_not_called()
+    gh.api.assert_not_called()
+    gh.set_secret.assert_not_called()
     assert "EVERY listed location" in prompt.call_args.args[0]
     assert "App ID 42" in prompt.call_args.args[0]
+    assert "Choose 1 or 2" in prompt.call_args.args[0]
 
 
-def test_rotation_action_is_readable_at_each_prompt_without_console_relay(
-    legacy_state: dict[str, Any], tmp_path: Path
+def test_rotation_choices_reprompt_and_actions_are_readable_without_console_relay(
+    legacy_state: dict[str, Any], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     result_file = tmp_path / "result.json"
     reporter = owner_setup.SetupReporter("tj-agents", result_file)
     browser = mock.Mock()
-    observed = []
+    observed: list[dict[str, Any]] = []
+
+    responses = iter(["", "1", "invalid", "1"])
 
     def respond(message: str) -> str:
         receipt = json.loads(result_file.read_text(encoding="utf-8"))
-        observed.append(receipt)
-        if len(observed) == 1:
+        if not observed or observed[-1]["action"]["kind"] != receipt["action"]["kind"]:
+            observed.append(receipt)
+        if receipt["action"]["kind"] == "identify_legacy_app":
             browser.assert_not_called()
-            return "credentials belong to tj-agents-pin-updater"
+            return next(responses)
         browser.assert_called_once_with(receipt["action"]["url"])
-        return "revoked tj-agents-pin-updater"
+        return next(responses)
 
     owner_setup.confirm_legacy_rotation(
         "tj-agents",
@@ -554,10 +562,13 @@ def test_rotation_action_is_readable_at_each_prompt_without_console_relay(
     generate = next(i for i, step in enumerate(steps) if "New key" in step)
     download = next(i for i, step in enumerate(steps) if ".pem" in step)
     delete = next(i for i, step in enumerate(steps) if step.startswith("Delete"))
-    confirm = next(i for i, step in enumerate(steps) if "revoked " in step)
+    confirm = next(i for i, step in enumerate(steps) if step.startswith("Choose 1"))
     assert generate < download < delete < confirm
     assert "Credentials > Key pairs > New key" in steps[generate]
     assert "KEEPING the replacement" in steps[delete]
+    assert "Choose 2" in json.dumps(observed[0]["action"]["steps"])
+    assert "Choose 2" in json.dumps(steps)
+    assert capsys.readouterr().out.count("Choose 1 to continue or 2 to cancel.") == 2
     reporter.finish(1, "owner stopped")
     assert (
         json.loads(result_file.read_text(encoding="utf-8"))["action"]
@@ -575,8 +586,8 @@ def test_legacy_exposure_requires_owner_key_revocation_before_migration(
     select_key = mock.Mock()
     monkeypatch.setattr(owner_setup, "app_key", select_key)
     gh = mock.Mock()
-    responses = iter(["credentials belong to tj-agents-pin-updater", "not confirmed"])
-    with pytest.raises(owner_setup.SetupError, match="key-rotation confirmation"):
+    responses = iter(["1", "2"])
+    with pytest.raises(owner_setup.SetupError, match="owner cancelled key rotation"):
         owner_setup.setup(
             "tj-agents", gh, open_url=lambda _: None, prompt=lambda _: next(responses)
         )
@@ -609,10 +620,10 @@ def test_legacy_rotation_selects_its_existing_replacement_after_confirmation(
         prompts.append(message)
         if len(prompts) == 1:
             browser.assert_not_called()
-            return "credentials belong to tj-agents-pin-updater"
+            return "1"
         browser.assert_called_once()
         if len(prompts) == 2:
-            return "revoked tj-agents-pin-updater"
+            return "1"
         assert "replacement" in message
         return str(path)
 
@@ -724,9 +735,7 @@ def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
     monkeypatch.setattr(owner_setup, "load_enrollment", lambda: bridge)
     gh = mock.Mock()
     gh.api.return_value = {"default_branch": "main"}
-    responses = iter(
-        ["credentials belong to tj-agents-pin-updater", "revoked tj-agents-pin-updater"]
-    )
+    responses = iter(["1", "1"])
     with pytest.raises(StopAfterProtectionError):
         owner_setup.setup(
             owner, gh, open_url=lambda _: None, prompt=lambda _: next(responses)
