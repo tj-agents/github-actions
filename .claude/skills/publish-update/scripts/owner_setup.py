@@ -121,6 +121,22 @@ def print_progress(message: str) -> None:
     print(message, flush=True)
 
 
+def choose_confirmation(
+    prompt: Callable[[str], str],
+    proceed: str,
+    cancel: str,
+    cancelled: str,
+) -> None:
+    message = f"Select an option:\n1. {proceed}\n2. {cancel}\nChoose 1 or 2: "
+    while True:
+        choice = prompt(message).strip()
+        if choice == "1":
+            return
+        if choice == "2":
+            raise SetupError(cancelled)
+        print_progress("Choose 1 to continue or 2 to cancel.")
+
+
 class SetupReporter:
     def __init__(self, owner: str, result_file: Path | None) -> None:
         self.owner = owner
@@ -769,20 +785,25 @@ def confirm_legacy_rotation(
         f"{owner}/{slug} (App ID {updater['id']}, client ID {updater['client_id']})"
     )
     print_progress(f"GitHub verified the configured updater: {identity}.")
-    confirmation = f"credentials belong to {slug}"
-    ownership_prompt = (
-        "After checking the provisioning records for EVERY listed location, "
-        f"type '{confirmation}' only if all credentials belong to {identity}: "
+    ownership_confirmation = (
+        f"I verified EVERY listed location, and all credentials belong to {identity}."
     )
+    ownership_cancel = "Cancel safely without requesting any key revocation."
     action["steps"].extend(
-        [f"Verified configured updater: {identity}.", ownership_prompt]
+        [
+            f"Verified configured updater: {identity}.",
+            f"Choose 1: {ownership_confirmation}",
+            f"Choose 2: {ownership_cancel}",
+            "Enter 1 or 2. Other input asks again without making changes.",
+        ]
     )
     request_action(action)
-    if prompt(ownership_prompt).strip() != confirmation:
-        raise SetupError(
-            "legacy credential ownership confirmation is required; "
-            "no revocation was requested"
-        )
+    choose_confirmation(
+        prompt,
+        ownership_confirmation,
+        ownership_cancel,
+        "owner cancelled legacy credential verification; no revocation was requested",
+    )
     url = f"https://github.com/organizations/{owner}/settings/apps/{slug}#private-key"
     action = {
         "kind": SetupActionKind.ROTATE_UPDATER_KEYS,
@@ -797,8 +818,10 @@ def confirm_legacy_rotation(
             "Delete all older keys while KEEPING the replacement key just created. "
             "This invalidates every use of those keys, including any copied key; "
             "removing an Actions secret alone does not revoke it.",
-            f"Return here and type 'revoked {slug}' to confirm all older keys were "
-            "deleted and the replacement key was kept.",
+            "Choose 1 only after the replacement PEM was downloaded and every older "
+            "key was deleted while keeping the replacement.",
+            "Choose 2 to cancel safely before credential migration.",
+            "Enter 1 or 2. Other input asks again without making changes.",
         ],
         "url": url,
     }
@@ -807,11 +830,13 @@ def confirm_legacy_rotation(
     for line in action["steps"]:
         print_progress(line)
     open_url(url)
-    if prompt(
-        f"Type 'revoked {slug}' after keeping the replacement "
-        "and deleting all old keys: "
-    ).strip() != (f"revoked {slug}"):
-        raise SetupError("owner key-rotation confirmation is required before migration")
+    choose_confirmation(
+        prompt,
+        "I downloaded the replacement PEM and deleted every older key while "
+        "keeping the replacement.",
+        "Cancel safely before credential migration.",
+        "owner cancelled key rotation confirmation before credential migration",
+    )
 
 
 def verify_enrollment_job(
