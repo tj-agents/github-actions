@@ -264,7 +264,11 @@ def protected(
     else:
         policy = {"protected_branches": False, "custom_branch_policies": True}
     policies_path = environment_path + "/deployment-branch-policies"
-    existing = list(pages(gh, policies_path)) if current else []
+    existing = (
+        list(pages(gh, policies_path))
+        if current and current.get("deployment_branch_policy") is not None
+        else []
+    )
     names = [item.get("name") for item in existing]
     if len(names) != len(set(names)):
         raise EnrollmentError(

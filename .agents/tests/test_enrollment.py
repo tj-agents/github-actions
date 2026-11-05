@@ -67,6 +67,9 @@ class FakeGitHub:
         base_path = path.split("?", 1)[0]
         if method == "GET":
             if base_path.endswith("/deployment-branch-policies"):
+                environment = self.state.get(base_path.rsplit("/", 1)[0], {})
+                if environment.get("deployment_branch_policy") is None:
+                    raise enrollment.EnrollmentError("gh: Not Found (HTTP 404)")
                 policies = self.state.get(base_path, [])
                 if isinstance(policies, dict):
                     policies = policies.get("branch_policies", [])
@@ -618,16 +621,26 @@ def test_real_environment_branch_rule_is_accepted_on_repeat() -> None:
     }
 
 
-def test_auto_created_empty_environment_is_safely_tightened() -> None:
+@pytest.mark.parametrize("apply", [False, True])
+def test_auto_created_empty_environment_is_safely_tightened(apply: bool) -> None:
     target = "tj-agents/plugin"
     path = f"repos/{target}/environments/update-pins"
     fake = FakeGitHub(
         {path: {"deployment_branch_policy": None, "protection_rules": []}}
     )
-    enrollment.protected(fake, target, "main", apply=True)
-    assert (
-        fake.state[path]["deployment_branch_policy"]["custom_branch_policies"] is True
-    )
+    result = enrollment.protected(fake, target, "main", apply=apply)
+    assert result["action"] == ("enrolled" if apply else "enroll")
+    if apply:
+        assert fake.state[path]["deployment_branch_policy"] == {
+            "protected_branches": False,
+            "custom_branch_policies": True,
+        }
+        assert fake.state[path + "/deployment-branch-policies"] == [
+            {"id": 1, "name": "main", "type": "branch"}
+        ]
+    else:
+        assert fake.state[path]["deployment_branch_policy"] is None
+        assert all(method == "GET" for method, _, _ in fake.calls)
     assert not fake.env_secrets
 
 
