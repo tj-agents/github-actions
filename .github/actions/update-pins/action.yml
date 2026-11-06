@@ -51,8 +51,7 @@ runs:
         token: ${{ inputs.token }}
         path: ${{ inputs.path }}
         branch: Chore/UpdateSharedPins
-        add-paths: |
-          .github/**/*.y*ml
+        add-paths: ${{ steps.update.outputs.add-paths }}
         commit-message: 'chore: update shared action pins'
         author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
         committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
