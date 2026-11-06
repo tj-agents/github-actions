@@ -58,6 +58,33 @@ regeneration select the caller's `update-pins` environment, restricted to its ex
 the caller still passes it by name to the reusable workflow. Core CI computes export and digest hashes;
 this action does not update them.
 
+## Generated updater pull requests
+
+Dedicated updater pull requests merge without human approval after their required checks pass. This includes
+both ordinary SHA refreshes and exact supported caller/bootstrap migrations. The central trusted
+`merge-updater-prs` workflow is the only automation that grants this exception. On its bounded ten-minute
+schedule, after central enrollment/bootstrap completion, or when dispatched manually, it scans eligible
+repositories and admits a candidate only when it is an open, non-draft same-repository pull request to that
+repository's default branch, from the verified immutable updater App identity, whose complete tree exactly
+matches a replay of the trusted generator and whose current required checks pass.
+
+Events only wake a bounded scan: a central enrollment/bootstrap event must prove eligible default-branch
+provenance before it can do so. The updater reads Actions, Checks and Commit statuses to verify the current
+pull-request event and required-check evidence. It does not trust a title, branch name, App-like login, hint,
+or changed-file allowlist by itself. A pending check, failed check, changed pull-request identity, or unavailable
+GitHub response leaves the pull request open for a later automatic pass; it never asks for an approval as a
+workaround. The exception does not alter the repository's approval policy for ordinary source or agent-authored
+pull requests. A publication hint still has no merge authority.
+
+```text
+Candidate: the verified updater opens a supported bootstrap migration on a repository's default branch.
+Admission: trusted replay produces the same complete tree and all required checks for the current head pass.
+Result: merge-updater-prs merges it without an approval.
+
+Candidate: an agent opens a source-code pull request.
+Result: its repository merge policy still requires the normal human approval and checks.
+```
+
 An organization owner bootstraps publication once. Preview from this skill directory is offline and
 does not validate owner authorization:
 
@@ -169,10 +196,12 @@ Next local prompt: select that replacement PEM; no second key generation.
 ```
 
 The locked environment supplies its cryptographic verifier. Setup configures `<owner>-pin-updater` for
-contents, pull requests and workflows write, plus a
-separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and
-environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
-environment. Only the updater key reaches consumer `update-pins` environments.
+contents, pull requests and workflows write, plus Actions, Checks and Commit statuses read. It configures a
+separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and environments
+write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment` environment. Only
+the updater key reaches consumer `update-pins` environments. When an existing updater App gains those read
+permissions, the owner accepts that installation update once; setup reuses the existing protected keys and
+installation, without key rotation or another onboarding flow.
 
 Enrollment selects same-owner, non-fork, non-archived repositories whose default branch either has a
 matching `.agents/plugins/template.json` or declares custom generated-file publication in
