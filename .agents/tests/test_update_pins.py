@@ -235,7 +235,7 @@ jobs:
 """)
         summary = updater.update(self.project, ["neutral/actions"], files=[".github/workflows/ci.yml"], resolver=lambda _: "c" * 40, comparer=lambda *_: None, content_comparer=lambda *_: True)
         content = path.read_text(encoding="utf-8")
-        self.assertEqual({"changed": True, "files": 1, "repositories": ["neutral/actions"]}, summary)
+        self.assertEqual({"changed": True, "files": 1, "repositories": ["neutral/actions"], "extensions": [".yml"]}, summary)
         self.assertIn("'neutral/actions/.github/actions/check@" + "c" * 40 + "'", content)
         self.assertIn("other/tool@" + "b" * 40, content)
         self.assertIn("uses: ./local-action", content)
@@ -442,7 +442,7 @@ uses: neutral/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
     def test_check_reports_pending_change_without_writing(self):
         path = self.write("check.yml", "uses: neutral/actions@" + "a" * 40 + "\n")
-        with mock.patch.object(updater, "update", return_value={"changed": True, "files": 1, "repositories": []}):
+        with mock.patch.object(updater, "update", return_value={"changed": True, "files": 1, "repositories": [], "extensions": [".yml"]}):
             self.assertEqual(1, updater.main(["--project", str(self.project), "--repositories", "neutral/actions", "--check"]))
         self.assertIn("@" + "a" * 40, path.read_text(encoding="utf-8"))
 

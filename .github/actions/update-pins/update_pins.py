@@ -418,7 +418,11 @@ def update(
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(content)
-    return {"changed": bool(changed), "files": len(changed), "repositories": repositories[:20]}
+    extensions = [
+        extension for extension in (".yml", ".yaml")
+        if any(path.suffix == extension for path, _ in changed)
+    ]
+    return {"changed": bool(changed), "files": len(changed), "repositories": repositories[:20], "extensions": extensions}
 
 
 def write_outputs(summary):
@@ -427,6 +431,7 @@ def write_outputs(summary):
         with Path(output).open("a", encoding="utf-8", newline="") as handle:
             handle.write("changed=" + str(summary["changed"]).lower() + "\n")
             handle.write("summary=" + json.dumps(summary, separators=(",", ":")) + "\n")
+            handle.write("add-paths=" + ",".join(".github/**/*" + extension for extension in summary["extensions"]) + "\n")
 
 
 def main(arguments=None):
