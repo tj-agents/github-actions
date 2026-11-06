@@ -1,7 +1,7 @@
 import base64
 import importlib.util
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -500,7 +500,12 @@ def test_dispatch_check_cannot_override_pending_pull_request_check() -> None:
             suite_path: {"check_suites": []},
             first_run_path: {
                 "workflow_runs": [
-                    {"check_suite_id": 101, "head_sha": HEAD, "event": "pull_request"}
+                    {
+                        "check_suite_id": 101,
+                        "head_sha": HEAD,
+                        "event": "pull_request",
+                        "workflow_id": 1,
+                    }
                 ]
             },
             second_run_path: {
@@ -509,6 +514,7 @@ def test_dispatch_check_cannot_override_pending_pull_request_check() -> None:
                         "check_suite_id": 102,
                         "head_sha": HEAD,
                         "event": "workflow_dispatch",
+                        "workflow_id": 2,
                     }
                 ]
             },
@@ -565,7 +571,12 @@ def test_dispatch_check_does_not_block_eligible_pull_request_check() -> None:
             suite_path: {"check_suites": []},
             first_run_path: {
                 "workflow_runs": [
-                    {"check_suite_id": 101, "head_sha": HEAD, "event": "pull_request"}
+                    {
+                        "check_suite_id": 101,
+                        "head_sha": HEAD,
+                        "event": "pull_request",
+                        "workflow_id": 1,
+                    }
                 ]
             },
             second_run_path: {
@@ -574,6 +585,7 @@ def test_dispatch_check_does_not_block_eligible_pull_request_check() -> None:
                         "check_suite_id": 102,
                         "head_sha": HEAD,
                         "event": "workflow_dispatch",
+                        "workflow_id": 2,
                     }
                 ]
             },
@@ -636,12 +648,22 @@ def test_observed_ci_requires_each_eligible_github_actions_suite() -> None:
             },
             first_run_path: {
                 "workflow_runs": [
-                    {"check_suite_id": 101, "head_sha": HEAD, "event": "pull_request"}
+                    {
+                        "check_suite_id": 101,
+                        "head_sha": HEAD,
+                        "event": "pull_request",
+                        "workflow_id": 1,
+                    }
                 ]
             },
             second_run_path: {
                 "workflow_runs": [
-                    {"check_suite_id": 102, "head_sha": HEAD, "event": "pull_request"}
+                    {
+                        "check_suite_id": 102,
+                        "head_sha": HEAD,
+                        "event": "pull_request",
+                        "workflow_id": 2,
+                    }
                 ]
             },
         }
@@ -707,7 +729,12 @@ def test_observed_ci_ignores_ineligible_github_actions_suite() -> None:
             },
             first_run_path: {
                 "workflow_runs": [
-                    {"check_suite_id": 101, "head_sha": HEAD, "event": "pull_request"}
+                    {
+                        "check_suite_id": 101,
+                        "head_sha": HEAD,
+                        "event": "pull_request",
+                        "workflow_id": 1,
+                    }
                 ]
             },
             second_run_path: {
@@ -716,12 +743,94 @@ def test_observed_ci_ignores_ineligible_github_actions_suite() -> None:
                         "check_suite_id": 102,
                         "head_sha": HEAD,
                         "event": "workflow_dispatch",
+                        "workflow_id": 2,
                     }
                 ]
             },
         }
     )
     assert merger.observed_ci_state(gh, "tj-agents/example", HEAD) == (True, True, "")
+
+
+def test_observed_ci_uses_latest_eligible_suite_per_workflow() -> None:
+    prefix = "repos/tj-agents/example"
+    runs_path = f"{prefix}/commits/{HEAD}/check-runs?filter=latest&per_page=100&page=1"
+    statuses_path = f"{prefix}/commits/{HEAD}/statuses?per_page=100&page=1"
+    suites_path = f"{prefix}/commits/{HEAD}/check-suites?per_page=100&page=1"
+
+    def observed(
+        suites: list[dict[str, Any]], origins: dict[int, tuple[str, int]]
+    ) -> tuple[bool, bool, str]:
+        responses: dict[str, Any] = {
+            runs_path: {
+                "check_runs": [
+                    {
+                        "id": 1,
+                        "name": "verify",
+                        "head_sha": HEAD,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "app": {"id": 7},
+                    }
+                ]
+            },
+            statuses_path: [],
+            suites_path: {"check_suites": suites},
+        }
+        for suite_id, (event, workflow_id) in origins.items():
+            responses[
+                f"{prefix}/actions/runs?check_suite_id={suite_id}&head_sha={HEAD}"
+                "&per_page=100&page=1"
+            ] = {
+                "workflow_runs": [
+                    {
+                        "check_suite_id": suite_id,
+                        "head_sha": HEAD,
+                        "event": event,
+                        "workflow_id": workflow_id,
+                    }
+                ]
+            }
+        return cast(
+            tuple[bool, bool, str],
+            merger.observed_ci_state(FakeGitHub(responses), "tj-agents/example", HEAD),
+        )
+
+    def suite(identifier: int, status: str, conclusion: str | None) -> dict[str, Any]:
+        return {
+            "id": identifier,
+            "head_sha": HEAD,
+            "status": status,
+            "conclusion": conclusion,
+            "app": {"id": merger.GITHUB_ACTIONS_APP_ID},
+        }
+
+    assert observed(
+        [
+            suite(101, "completed", "cancelled"),
+            suite(102, "completed", "success"),
+        ],
+        {101: ("pull_request", 123), 102: ("pull_request", 123)},
+    ) == (True, True, "")
+    assert observed(
+        [
+            suite(101, "completed", "cancelled"),
+            suite(102, "completed", "success"),
+            suite(103, "in_progress", None),
+        ],
+        {
+            101: ("pull_request", 123),
+            102: ("pull_request", 123),
+            103: ("pull_request", 456),
+        },
+    ) == (False, True, "check suite is pending or failing")
+    assert observed(
+        [
+            suite(101, "completed", "success"),
+            suite(102, "completed", "failure"),
+        ],
+        {101: ("pull_request", 123), 102: ("workflow_dispatch", 123)},
+    ) == (True, True, "")
 
 
 def test_required_test_merge_evidence_blocks_head_fallback() -> None:
@@ -898,6 +1007,104 @@ def test_base_source_revisions_keeps_unchanged_allowlisted_source_pins() -> None
         "tj-agents/template": template,
     }
     assert all("repos/tj-agents/template" not in call for call in gh.calls)
+
+
+def test_replay_accepts_divergent_unchanged_source_pins() -> None:
+    template_old_one = "e" * 40
+    template_old_two = "f" * 40
+    template_current = "9" * 40
+    ci, ci_blob = entry(
+        "uses: tj-agents/github-actions/.github/actions/check@" + OLD + "\n"
+    )
+    updated_ci, updated_ci_blob = entry(
+        "uses: tj-agents/github-actions/.github/actions/check@" + NEW + "\n"
+    )
+    template_one, template_one_blob = entry(
+        "uses: tj-agents/template/.github/actions/check@" + template_old_one + "\n"
+    )
+    template_two, template_two_blob = entry(
+        "uses: tj-agents/template/.github/actions/check@" + template_old_two + "\n"
+    )
+    updater, updater_blob = entry(
+        "      repositories: tj-agents/github-actions,tj-agents/template\n"
+    )
+    declaration, declaration_blob = entry(enrollment())
+    before = {
+        ".github/workflows/ci.yml": ci,
+        ".github/workflows/template-one.yml": template_one,
+        ".github/workflows/template-two.yml": template_two,
+        ".github/workflows/update-pins.yml": updater,
+        ".github/update-enrollment.json": declaration,
+    }
+    after = {**before, ".github/workflows/ci.yml": updated_ci}
+    root, github, actions, check = ("1" * 40, "2" * 40, "3" * 40, "4" * 40)
+    first_compare = (
+        f"repos/tj-agents/template/compare/{template_old_one}...{template_current}"
+    )
+    second_compare = (
+        f"repos/tj-agents/template/compare/{template_old_two}...{template_current}"
+    )
+
+    def template_tree(path: str, oid: str) -> dict[str, Any]:
+        return {"tree": [{"path": path, "type": "tree", "sha": oid}]}
+
+    responses = (
+        trees(before, after)
+        | source_responses()
+        | {
+            f"repos/tj-agents/example/git/blobs/{ci[2]}": ci_blob,
+            f"repos/tj-agents/example/git/blobs/{updated_ci[2]}": updated_ci_blob,
+            f"repos/tj-agents/example/git/blobs/{template_one[2]}": template_one_blob,
+            f"repos/tj-agents/example/git/blobs/{template_two[2]}": template_two_blob,
+            f"repos/tj-agents/example/git/blobs/{updater[2]}": updater_blob,
+            f"repos/tj-agents/example/git/blobs/{declaration[2]}": declaration_blob,
+            "repos/tj-agents/template": {"default_branch": "main"},
+            "repos/tj-agents/template/commits/main": {"sha": template_current},
+            first_compare: {"status": "ahead"},
+            second_compare: {"status": "ahead"},
+        }
+    )
+    for revision in (template_old_one, template_old_two, template_current):
+        responses[f"repos/tj-agents/template/commits/{revision}"] = {
+            "commit": {"tree": {"sha": root}}
+        }
+    responses |= {
+        f"repos/tj-agents/template/git/trees/{root}": template_tree(".github", github),
+        f"repos/tj-agents/template/git/trees/{github}": template_tree(
+            "actions", actions
+        ),
+        f"repos/tj-agents/template/git/trees/{actions}": template_tree("check", check),
+    }
+    assert merger.replay(
+        FakeGitHub(responses), "tj-agents", "tj-agents/example", BASE, HEAD
+    )
+
+
+def test_pull_request_must_be_up_to_date_with_default_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata: dict[str, Any] = {
+        "id": 12,
+        "full_name": "tj-agents/example",
+        "default_branch": "main",
+    }
+    pr: dict[str, Any] = {
+        "number": 4,
+        "draft": False,
+        "head": {"ref": merger.BRANCH, "sha": HEAD, "repo": {"id": 12}},
+        "base": {"ref": "main", "sha": BASE},
+        "user": {"id": 99, "type": "Bot"},
+    }
+    gh = FakeGitHub({"repos/tj-agents/example/commits/main": {"sha": NEW}})
+    monkeypatch.setattr(merger.ENROLLMENT, "eligible_repository", lambda *args: True)
+    monkeypatch.setattr(merger, "merge_base", lambda *args: BASE)
+    monkeypatch.setattr(merger, "replay", lambda *args: True)
+    monkeypatch.setattr(merger, "required_contexts", lambda *args: set())
+    assert merger.merge_candidate(gh, "tj-agents", "example", metadata, pr, 99) == (
+        "waiting",
+        "pull request must be up to date with default branch",
+    )
+    assert not any(call.endswith("/merge") for call in gh.calls)
 
 
 def test_official_pr_ignores_reviews_but_rejects_foreign_head() -> None:

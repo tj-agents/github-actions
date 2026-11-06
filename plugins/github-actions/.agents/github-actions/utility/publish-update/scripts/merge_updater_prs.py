@@ -6,7 +6,6 @@ import base64
 import hashlib
 import importlib.util
 import json
-import os
 import re
 import subprocess
 import sys
@@ -22,7 +21,10 @@ BRANCH = "Chore/UpdateSharedPins"
 SHA = re.compile(r"[0-9a-f]{40}")
 SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?")
 TIMEOUT = 90
-NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+if sys.platform == "win32":
+    NO_WINDOW = subprocess.CREATE_NO_WINDOW
+else:
+    NO_WINDOW = 0
 GITHUB_ACTIONS_APP_ID = 15368
 ELIGIBLE_ACTION_EVENTS = {
     "push",
@@ -378,8 +380,6 @@ def base_source_revisions(
         if len(pinned) == 1:
             revisions[source] = next(iter(pinned))
             continue
-        if len(pinned) > 1:
-            raise MergeError("unchanged source has divergent base pins")
         metadata = gh.api(f"repos/{source}")
         if not isinstance(metadata, dict) or not isinstance(
             metadata.get("default_branch"), str
@@ -621,33 +621,55 @@ def check_key(record: Mapping[str, Any]) -> str | None:
     return f"{name}\0{app_id}"
 
 
-def action_origin_state(gh: Any, repository: str, revision: str, suite_id: int) -> str:
+def action_origin(
+    gh: Any, repository: str, revision: str, suite_id: int
+) -> tuple[str, int | None]:
     cache = getattr(gh, "action_origin_cache", None)
     if not isinstance(cache, dict):
         cache = {}
         gh.action_origin_cache = cache
     key = (repository, revision, suite_id)
     cached = cache.get(key)
-    if cached in {"eligible", "ineligible", "unknown"}:
-        return str(cached)
+    if (
+        isinstance(cached, tuple)
+        and len(cached) == 2
+        and cached[0] in {"eligible", "ineligible", "unknown"}
+        and (cached[1] is None or type(cached[1]) is int)
+    ):
+        return str(cached[0]), cached[1]
     runs = object_pages(
         gh,
         f"repos/{repository}/actions/runs?check_suite_id={suite_id}&head_sha={revision}",
         "workflow_runs",
     )
     matching = [run for run in runs if run.get("check_suite_id") == suite_id]
+    result: tuple[str, int | None]
     if not matching or any(run.get("head_sha") != revision for run in matching):
-        state = "unknown"
+        result = ("unknown", None)
     else:
         events = {run.get("event") for run in matching}
-        if len(events) != 1 or not isinstance(next(iter(events)), str):
-            state = "unknown"
-        elif next(iter(events)) in ELIGIBLE_ACTION_EVENTS:
-            state = "eligible"
+        workflow_ids = {run.get("workflow_id") for run in matching}
+        if len(events) != 1 or len(workflow_ids) != 1:
+            result = ("unknown", None)
         else:
-            state = "ineligible"
-    cache[key] = state
-    return state
+            event = next(iter(events))
+            workflow_id = next(iter(workflow_ids))
+            if (
+                not isinstance(event, str)
+                or type(workflow_id) is not int
+                or workflow_id <= 0
+            ):
+                result = ("unknown", None)
+            elif event in ELIGIBLE_ACTION_EVENTS:
+                result = ("eligible", workflow_id)
+            else:
+                result = ("ineligible", workflow_id)
+    cache[key] = result
+    return result
+
+
+def action_origin_state(gh: Any, repository: str, revision: str, suite_id: int) -> str:
+    return action_origin(gh, repository, revision, suite_id)[0]
 
 
 def trusted_check_runs(
@@ -710,26 +732,42 @@ def suite_state(gh: Any, repository: str, revision: str) -> tuple[bool, bool, st
     suites = object_pages(
         gh, f"repos/{repository}/commits/{revision}/check-suites", "check_suites"
     )
-    trusted: list[Mapping[str, Any]] = []
+    latest: dict[str, Mapping[str, Any]] = {}
     blocked = False
+
+    def retain(key: str, suite: Mapping[str, Any]) -> None:
+        suite_id = suite.get("id")
+        if type(suite_id) is not int or suite_id <= 0:
+            raise MergeError("GitHub returned a record without a monotonic identity")
+        current = latest.get(key)
+        if current is None or suite_id > current["id"]:
+            latest[key] = suite
+
     for suite in suites:
         app = suite.get("app")
         app_id = app.get("id") if isinstance(app, dict) else None
         if app_id != GITHUB_ACTIONS_APP_ID:
-            trusted.append(suite)
+            key = suite_key(suite)
+            if key is None:
+                raise MergeError(
+                    "GitHub returned a record without a monotonic identity"
+                )
+            retain(key, suite)
             continue
         suite_id = suite.get("id")
         if type(suite_id) is not int or suite_id <= 0:
             blocked = True
             continue
-        state = action_origin_state(gh, repository, revision, suite_id)
+        state, workflow_id = action_origin(gh, repository, revision, suite_id)
         if state == "eligible":
-            trusted.append(suite)
+            if workflow_id is None:
+                blocked = True
+            else:
+                retain(f"{app_id}\0{workflow_id}", suite)
         elif state == "unknown":
             blocked = True
     if blocked:
         return False, True, "GitHub Actions suite has no eligible workflow event"
-    latest = latest_records(trusted, suite_key)
     if not latest:
         return True, False, ""
     if any(
@@ -901,6 +939,8 @@ def merge_candidate(
         gh.api(f"repos/{repository}/commits/{quote(branch, safe='')}").get("sha")
     )
     contexts = required_contexts(gh, repository, branch, policy_ref)
+    if merge_base(gh, repository, policy_ref, head) != policy_ref:
+        return "waiting", "pull request must be up to date with default branch"
     ready, reason = checks_pass(gh, repository, pr, contexts)
     if not ready:
         return "waiting", reason
