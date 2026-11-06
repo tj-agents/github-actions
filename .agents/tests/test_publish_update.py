@@ -18,6 +18,7 @@ PUBLISH = ROOT / ".github/actions/publish-update/publish.py"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
 UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
 RENOVATE_DEFAULT = ROOT / "renovate-default.json"
+RENOVATE_CONFIG = ROOT / ".github/renovate.json"
 
 
 def load(name: str, path: Path) -> Any:
@@ -219,6 +220,24 @@ def test_shared_renovate_preset_uses_native_dependency_management() -> None:
         ],
         "lockFileMaintenance": {"enabled": True},
     }
+
+
+def test_canary_discovery_cannot_inherit_automatic_merges() -> None:
+    preset = json.loads(RENOVATE_DEFAULT.read_text(encoding="utf-8"))
+    canary = json.loads(RENOVATE_CONFIG.read_text(encoding="utf-8"))
+    effective = {**preset, **canary}
+    assert canary["extends"] == ["github>tj-agents/github-actions:renovate-default"]
+    assert preset["automerge"] is True
+    assert effective["automerge"] is False
+    assert effective["schedule"] == ["at any time"]
+
+
+def test_retained_updater_only_accepts_existing_reusable_callers() -> None:
+    updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
+    assert "  workflow_call:" in updater
+    assert "  schedule:" not in updater
+    assert "  workflow_dispatch:" not in updater
+    assert "repositories: ${{ inputs.repositories }}" in updater
 
 
 def test_current_committed_policy_is_read_at_authoritative_sha_without_write() -> None:
