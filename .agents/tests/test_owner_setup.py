@@ -39,7 +39,7 @@ def test_app_permissions_are_separated_and_exact() -> None:
     owner_setup.check_app(controller, "tj-agents", owner_setup.CONTROLLER_PERMISSIONS)
 
     assert owner_setup.CONTROLLER_PERMISSIONS["contents"] == "read"
-    for permission in ("pull_requests", "workflows"):
+    for permission in ("actions", "checks", "pull_requests", "statuses", "workflows"):
         assert permission not in owner_setup.CONTROLLER_PERMISSIONS
     for permission in ("administration", "environments", "secrets"):
         assert permission not in owner_setup.PERMISSIONS

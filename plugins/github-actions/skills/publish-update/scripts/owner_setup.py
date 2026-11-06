@@ -35,7 +35,14 @@ from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import parse_qs, quote, urlsplit
 
-PERMISSIONS = {"contents": "write", "pull_requests": "write", "workflows": "write"}
+PERMISSIONS = {
+    "actions": "read",
+    "checks": "read",
+    "contents": "write",
+    "pull_requests": "write",
+    "statuses": "read",
+    "workflows": "write",
+}
 CONTROLLER_PERMISSIONS = {
     "contents": "read",
     "administration": "write",
@@ -1175,8 +1182,8 @@ def setup(
 def preview(owner: str) -> None:
     print(f"Preview for {owner} (run with --apply as an organization owner):")
     print(
-        f"- configure {app_slug(owner)} with contents, pull requests and "
-        "workflows write"
+        f"- configure {app_slug(owner)} with actions, checks and statuses read; "
+        "contents, pull requests and workflows write"
     )
     print(
         f"- configure {controller_slug(owner)} with contents read, administration "

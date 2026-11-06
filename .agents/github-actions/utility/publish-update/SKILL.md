@@ -68,11 +68,13 @@ repositories and admits a candidate only when it is an open, non-draft same-repo
 repository's default branch, from the verified immutable updater App identity, whose complete tree exactly
 matches a replay of the trusted generator and whose current required checks pass.
 
-It does not trust a title, branch name, App-like login, hint, or changed-file allowlist by itself. A pending
-check, failed check, changed pull-request identity, or unavailable GitHub response leaves the pull request
-open for a later automatic pass; it never asks for an approval as a workaround. The exception does not alter
-the repository's approval policy for ordinary source or agent-authored pull requests. A publication hint still
-has no merge authority.
+Events only wake a bounded scan: a central enrollment/bootstrap event must prove eligible default-branch
+provenance before it can do so. The updater reads Actions, Checks and Commit statuses to verify the current
+pull-request event and required-check evidence. It does not trust a title, branch name, App-like login, hint,
+or changed-file allowlist by itself. A pending check, failed check, changed pull-request identity, or unavailable
+GitHub response leaves the pull request open for a later automatic pass; it never asks for an approval as a
+workaround. The exception does not alter the repository's approval policy for ordinary source or agent-authored
+pull requests. A publication hint still has no merge authority.
 
 ```text
 Candidate: the verified updater opens a supported bootstrap migration on a repository's default branch.
@@ -194,10 +196,12 @@ Next local prompt: select that replacement PEM; no second key generation.
 ```
 
 The locked environment supplies its cryptographic verifier. Setup configures `<owner>-pin-updater` for
-contents, pull requests and workflows write, plus a
-separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and
-environments write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment`
-environment. Only the updater key reaches consumer `update-pins` environments.
+contents, pull requests and workflows write, plus Actions, Checks and Commit statuses read. It configures a
+separate `<owner>-enrollment-controller` for contents and secret metadata read, administration and environments
+write. The controller key stays in `<owner>/github-actions`' protected `update-enrollment` environment. Only
+the updater key reaches consumer `update-pins` environments. When an existing updater App gains those read
+permissions, the owner accepts that installation update once; setup reuses the existing protected keys and
+installation, without key rotation or another onboarding flow.
 
 Enrollment selects same-owner, non-fork, non-archived repositories whose default branch either has a
 matching `.agents/plugins/template.json` or declares custom generated-file publication in
