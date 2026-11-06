@@ -1,8 +1,5 @@
 name: Update shared action pins
 on:
-  schedule:
-    - cron: '17 */6 * * *'
-  workflow_dispatch:
   workflow_call:
     inputs:
       repositories:
@@ -40,4 +37,4 @@ jobs:
         uses: tj-agents/github-actions/.github/actions/update-pins@a58c5ae162de36c4a71efb4abf1286871e275f4e
         with:
           token: ${{ steps.app-token.outputs.token }}
-          repositories: ${{ inputs.repositories || 'tj-agents/github-actions' }}
+          repositories: ${{ inputs.repositories }}
