@@ -26,10 +26,10 @@ merge, in `.github/merge-policy.json`:
 }
 ```
 
-- `requires_approval: true`: every PR needs one non-author approval before it merges. That approval
-  remains valid after later pushes to the same PR; required checks and source review still apply to the
-  current head. Agents push as the bot account, so the approver is Tommy. Once that approval and the
-  required checks are in place, merging the PR — by Tommy or by an agent — is not separately gated; the
+- `requires_approval: true`: every ordinary source or agent-authored PR needs one non-author approval before
+  it merges. That approval remains valid after later pushes to the same PR; required checks and source review
+  still apply to the current head. Agents push as the bot account, so the approver is Tommy. Once that approval
+  and the required checks are in place, merging the PR — by Tommy or by an agent — is not separately gated; the
   ruleset only enforces that the approval and checks exist first.
 - `ci_pushes_default_branch: true`: deploy keys may push to the default branch, for a post-merge job
   that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
@@ -45,8 +45,10 @@ admin: that, not this script, stops an agent from merging past the policy or app
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
 Protected updater enrollment may add its verified App as an always-bypass actor for generated publication.
-The [publication setup](../publish-update/SKILL.md) owns eligibility and credentials. Merely finding an App
-with a conventional name grants no bypass.
+The [publication setup](../publish-update/SKILL.md#generated-updater-pull-requests) owns the narrowly scoped
+automatic-merge exception for verified generator output, including bootstrap migrations. It does not turn off
+approval for ordinary PRs. Merely finding an App with a conventional name or receiving a publication hint
+grants no bypass or merge authority.
 
 ## Commands
 
