@@ -20,9 +20,11 @@ include = [
   ".agents/tests/test_publish_generated.py",
   ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
+  ".agents/github-actions/utility/publish-update/scripts/merge_updater_prs.py",
   ".agents/tests/test_owner_setup.py",
   ".agents/tests/test_enrollment.py",
   ".agents/tests/test_update_pin_staging.py",
+  ".agents/tests/test_merge_updater_prs.py",
 ]
 target-version = "py312"
 
@@ -39,9 +41,11 @@ files = [
   ".agents/tests/test_publish_generated.py",
   ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
+  ".agents/github-actions/utility/publish-update/scripts/merge_updater_prs.py",
   ".agents/tests/test_owner_setup.py",
   ".agents/tests/test_enrollment.py",
   ".agents/tests/test_update_pin_staging.py",
+  ".agents/tests/test_merge_updater_prs.py",
 ]
 
 [[tool.mypy.overrides]]
