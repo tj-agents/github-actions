@@ -1,6 +1,5 @@
 import importlib.util
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -471,35 +470,6 @@ uses: neutral/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         self.assertEqual("f" * 40, updater.resolve_repository("neutral/actions", run))
         self.assertEqual(["gh", "api", "repos/neutral/actions", "--jq", ".default_branch"], calls[0])
         self.assertEqual("repos/neutral/actions/commits/trunk", calls[1][2])
-
-
-class PullRequestStagingTests(unittest.TestCase):
-    def test_stages_workflow_extensions_when_either_extension_is_absent(self):
-        action = (ROOT / ".github/actions/update-pins/action.yml").read_text(encoding="utf-8")
-        paths = action.split("        add-paths: |\n", 1)[1].split("        commit-message:", 1)[0]
-        patterns = paths.split()
-        cases = (
-            (".github/workflows/ci.yml",),
-            (".github/workflows/ci.yaml",),
-            (".github/workflows/ci.yml", ".github/actions/check/action.yaml"),
-        )
-        for workflows in cases:
-            with self.subTest(workflows=workflows), tempfile.TemporaryDirectory() as temporary:
-                project = Path(temporary)
-                subprocess.run(["git", "init", "--quiet", str(project)], check=True)
-                for name in (*workflows, ".github/config.json", "README.md", "outside.yml"):
-                    path = project / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("content\n", encoding="utf-8")
-                staged = subprocess.run(
-                    ["git", "add", "--", *patterns], cwd=project, capture_output=True, text=True,
-                )
-                self.assertEqual(0, staged.returncode, staged.stderr)
-                result = subprocess.run(
-                    ["git", "diff", "--cached", "--name-only"], cwd=project,
-                    check=True, capture_output=True, text=True,
-                )
-                self.assertEqual(set(workflows), set(result.stdout.splitlines()))
 
 
 class CallerTests(unittest.TestCase):

@@ -22,6 +22,7 @@ include = [
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
   ".agents/tests/test_owner_setup.py",
   ".agents/tests/test_enrollment.py",
+  ".agents/tests/test_update_pin_staging.py",
 ]
 target-version = "py312"
 
@@ -40,6 +41,7 @@ files = [
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
   ".agents/tests/test_owner_setup.py",
   ".agents/tests/test_enrollment.py",
+  ".agents/tests/test_update_pin_staging.py",
 ]
 
 [[tool.mypy.overrides]]
