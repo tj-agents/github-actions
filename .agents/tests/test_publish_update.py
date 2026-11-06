@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
-import re
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -18,6 +17,7 @@ SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
 PUBLISH = ROOT / ".github/actions/publish-update/publish.py"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
 UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
+RENOVATE_DEFAULT = ROOT / "renovate-default.json"
 
 
 def load(name: str, path: Path) -> Any:
@@ -184,15 +184,41 @@ def test_canonical_workflows_guard_verified_origin_and_secret_contracts() -> Non
         "github.event.workflow_run.head_repository.full_name == github.repository"
         in publisher
     )
-    assert re.search(
-        r"uses: tj-agents/github-actions/\.github/actions/publish-update@[0-9a-f]{40}",
-        publisher,
-    )
+    assert "uses: $/.github/actions/publish-update" in publisher
+    assert "tj-agents/github-actions/.github/actions/publish-update@" not in publisher
     assert "actions/checkout" not in publisher
     assert "UPDATE_APP_PRIVATE_KEY:\n        required: true" in updater
     assert "permission-contents: write" in updater
     assert "permission-pull-requests: write" in updater
     assert "permission-workflows: write" in updater
+
+
+def test_shared_renovate_preset_uses_native_dependency_management() -> None:
+    assert json.loads(RENOVATE_DEFAULT.read_text(encoding="utf-8")) == {
+        "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+        "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+        "automerge": True,
+        "automergeType": "pr",
+        "automergeStrategy": "squash",
+        "platformAutomerge": False,
+        "rebaseWhen": "behind-base-branch",
+        "updateNotScheduled": True,
+        "dependencyDashboardApproval": False,
+        "timezone": "Europe/London",
+        "schedule": ["* 0-5 * * *"],
+        "packageRules": [
+            {
+                "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+                "groupName": "non-major dependencies",
+            },
+            {
+                "matchManagers": ["github-actions"],
+                "matchPackageNames": ["tj-agents/template"],
+                "enabled": False,
+            },
+        ],
+        "lockFileMaintenance": {"enabled": True},
+    }
 
 
 def test_current_committed_policy_is_read_at_authoritative_sha_without_write() -> None:
