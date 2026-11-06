@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
@@ -23,6 +23,15 @@ SHA = re.compile(r"[0-9a-f]{40}")
 SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?")
 TIMEOUT = 90
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+GITHUB_ACTIONS_APP_ID = 15368
+ELIGIBLE_ACTION_EVENTS = {
+    "push",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_target",
+    "deployment",
+    "deployment_status",
+}
 
 
 class MergeError(Exception):
@@ -145,6 +154,8 @@ def tree(gh: Any, repository: str, revision: str) -> dict[str, tuple[str, str, s
             not isinstance(path, str)
             or PurePosixPath(path).is_absolute()
             or ".." in PurePosixPath(path).parts
+            or "\\" in path
+            or bool(PureWindowsPath(path).drive)
             or not isinstance(mode, str)
             or not isinstance(kind, str)
             or not isinstance(oid, str)
@@ -309,9 +320,11 @@ def source_content_changed(
 
 
 def validate_sources(
-    gh: Any, targets: Mapping[str, str]
+    gh: Any, targets: Mapping[str, str], changed: set[str]
 ) -> Callable[[str, str, str], None]:
     for repository, target in targets.items():
+        if repository not in changed:
+            continue
         data = gh.api(f"repos/{repository}")
         if not isinstance(data, dict) or not isinstance(
             data.get("default_branch"), str
@@ -340,6 +353,44 @@ def validate_sources(
             raise MergeError("candidate moves a source revision backwards")
 
     return comparer
+
+
+def base_source_revisions(
+    gh: Any,
+    repository: str,
+    entries: Mapping[str, tuple[str, str, str]],
+    files: Iterable[str],
+    allowlist: Iterable[str],
+    targets: Mapping[str, str],
+) -> dict[str, str]:
+    values: dict[str, set[str]] = {source.casefold(): set() for source in allowlist}
+    for path in files:
+        for _, _, match in UPDATER.reference_matches(
+            text_blob(gh, repository, entries, path)
+        ):
+            source = match.group("repository").casefold()
+            if source in values:
+                values[source].add(match.group("sha").casefold())
+    revisions = dict(targets)
+    for source, pinned in values.items():
+        if source in revisions:
+            continue
+        if len(pinned) == 1:
+            revisions[source] = next(iter(pinned))
+            continue
+        if len(pinned) > 1:
+            raise MergeError("unchanged source has divergent base pins")
+        metadata = gh.api(f"repos/{source}")
+        if not isinstance(metadata, dict) or not isinstance(
+            metadata.get("default_branch"), str
+        ):
+            raise MergeError("unchanged source repository has no default branch")
+        revisions[source] = valid_sha(
+            gh.api(
+                f"repos/{source}/commits/{quote(metadata['default_branch'], safe='')}"
+            ).get("sha")
+        )
+    return revisions
 
 
 def materialize(
@@ -396,7 +447,8 @@ def replay(
         raise MergeError("candidate base has no tracked GitHub YAML")
     allowlist = updater_allowlist(before, gh, repository)
     targets = proposal_candidates(gh, repository, before, after, allowlist)
-    comparer = validate_sources(gh, targets)
+    revisions = base_source_revisions(gh, repository, before, files, allowlist, targets)
+    comparer = validate_sources(gh, revisions, set(targets))
     for bootstrap in (False, True):
         with tempfile.TemporaryDirectory(prefix="merge-updater-prs-") as temporary:
             root = Path(temporary)
@@ -407,7 +459,7 @@ def replay(
                     root,
                     allowlist,
                     files=files,
-                    resolver=lambda source: targets[source.casefold()],
+                    resolver=lambda source: revisions[source.casefold()],
                     comparer=comparer,
                     content_comparer=lambda source, path, old, new: (
                         source_content_changed(gh, source, path, old, new)
@@ -511,14 +563,17 @@ def required_contexts(
 
 def check_records(
     gh: Any, repository: str, revision: str
-) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], set[str]]:
+    runs = object_pages(
+        gh,
+        f"repos/{repository}/commits/{revision}/check-runs?filter=latest",
+        "check_runs",
+    )
+    trusted, blocked = trusted_check_runs(gh, repository, revision, runs)
     return (
-        object_pages(
-            gh,
-            f"repos/{repository}/commits/{revision}/check-runs?filter=latest",
-            "check_runs",
-        ),
+        trusted,
         list(pages(gh, f"repos/{repository}/commits/{revision}/statuses")),
+        blocked,
     )
 
 
@@ -566,6 +621,63 @@ def check_key(record: Mapping[str, Any]) -> str | None:
     return f"{name}\0{app_id}"
 
 
+def action_origin_state(gh: Any, repository: str, revision: str, suite_id: int) -> str:
+    cache = getattr(gh, "action_origin_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        gh.action_origin_cache = cache
+    key = (repository, revision, suite_id)
+    cached = cache.get(key)
+    if cached in {"eligible", "ineligible", "unknown"}:
+        return str(cached)
+    runs = object_pages(
+        gh,
+        f"repos/{repository}/actions/runs?check_suite_id={suite_id}&head_sha={revision}",
+        "workflow_runs",
+    )
+    matching = [run for run in runs if run.get("check_suite_id") == suite_id]
+    if not matching or any(run.get("head_sha") != revision for run in matching):
+        state = "unknown"
+    else:
+        events = {run.get("event") for run in matching}
+        if len(events) != 1 or not isinstance(next(iter(events)), str):
+            state = "unknown"
+        elif next(iter(events)) in ELIGIBLE_ACTION_EVENTS:
+            state = "eligible"
+        else:
+            state = "ineligible"
+    cache[key] = state
+    return state
+
+
+def trusted_check_runs(
+    gh: Any,
+    repository: str,
+    revision: str,
+    runs: Iterable[Mapping[str, Any]],
+) -> tuple[list[Mapping[str, Any]], set[str]]:
+    trusted: list[Mapping[str, Any]] = []
+    blocked: set[str] = set()
+    for run in runs:
+        app = run.get("app")
+        app_id = app.get("id") if isinstance(app, dict) else None
+        if app_id != GITHUB_ACTIONS_APP_ID:
+            trusted.append(run)
+            continue
+        key = check_key(run)
+        suite = run.get("check_suite")
+        suite_id = suite.get("id") if isinstance(suite, dict) else None
+        if key is None or type(suite_id) is not int or suite_id <= 0:
+            blocked.add(key or "[malformed GitHub Actions check]")
+            continue
+        state = action_origin_state(gh, repository, revision, suite_id)
+        if state == "eligible":
+            trusted.append(run)
+        elif state == "unknown":
+            blocked.add(key)
+    return trusted, blocked
+
+
 def status_key(record: Mapping[str, Any]) -> str | None:
     context = record.get("context")
     return context if isinstance(context, str) else None
@@ -586,44 +698,82 @@ def passing_status(record: Mapping[str, Any]) -> bool:
 def suite_key(record: Mapping[str, Any]) -> str | None:
     app = record.get("app")
     app_id = app.get("id") if isinstance(app, dict) else None
-    return str(app_id) if type(app_id) is int and app_id > 0 else None
+    if type(app_id) is not int or app_id <= 0:
+        return None
+    if app_id == GITHUB_ACTIONS_APP_ID:
+        value = record.get("id")
+        return f"{app_id}\0{value}" if type(value) is int and value > 0 else None
+    return str(app_id)
 
 
-def suite_state(gh: Any, repository: str, revision: str) -> tuple[bool, str]:
+def suite_state(gh: Any, repository: str, revision: str) -> tuple[bool, bool, str]:
     suites = object_pages(
         gh, f"repos/{repository}/commits/{revision}/check-suites", "check_suites"
     )
-    latest = latest_records(suites, suite_key)
+    trusted: list[Mapping[str, Any]] = []
+    blocked = False
+    for suite in suites:
+        app = suite.get("app")
+        app_id = app.get("id") if isinstance(app, dict) else None
+        if app_id != GITHUB_ACTIONS_APP_ID:
+            trusted.append(suite)
+            continue
+        suite_id = suite.get("id")
+        if type(suite_id) is not int or suite_id <= 0:
+            blocked = True
+            continue
+        state = action_origin_state(gh, repository, revision, suite_id)
+        if state == "eligible":
+            trusted.append(suite)
+        elif state == "unknown":
+            blocked = True
+    if blocked:
+        return False, True, "GitHub Actions suite has no eligible workflow event"
+    latest = latest_records(trusted, suite_key)
+    if not latest:
+        return True, False, ""
     if any(
         suite.get("head_sha") != revision
         or suite.get("status") != "completed"
         or suite.get("conclusion") not in {"success", "neutral", "skipped"}
         for suite in latest.values()
     ):
-        return False, "check suite is pending or failing"
-    return True, ""
+        return False, True, "check suite is pending or failing"
+    return True, True, ""
 
 
-def observed_ci_state(gh: Any, repository: str, revision: str) -> tuple[bool, str]:
-    runs, statuses = check_records(gh, repository, revision)
+def observed_ci_state(
+    gh: Any, repository: str, revision: str
+) -> tuple[bool, bool, str]:
+    runs, statuses, blocked = check_records(gh, repository, revision)
     latest_runs = latest_records(runs, check_key)
     latest_statuses = latest_records(statuses, status_key)
-    if not latest_runs and not latest_statuses:
-        return False, "no current check or status evidence"
+    suites_pass, suites_observed, suites_reason = suite_state(gh, repository, revision)
+    records_observed = bool(latest_runs or latest_statuses or blocked)
+    observed = records_observed or suites_observed
+    if not observed:
+        return False, False, "no current check, status, or suite evidence"
+    if blocked:
+        return False, True, "GitHub Actions check has no eligible workflow event"
+    if not records_observed:
+        return False, True, "no current check or status evidence"
     if any(not passing_check(record, revision) for record in latest_runs.values()):
-        return False, "current check is pending or failing"
+        return False, True, "current check is pending or failing"
     if any(not passing_status(record) for record in latest_statuses.values()):
-        return False, "current status is pending or failing"
-    return suite_state(gh, repository, revision)
+        return False, True, "current status is pending or failing"
+    if not suites_pass:
+        return False, True, suites_reason
+    return True, True, ""
 
 
 def check_state(
     gh: Any, repository: str, revision: str, contexts: set[tuple[str, int | None]]
 ) -> tuple[bool, bool]:
-    runs, statuses = check_records(gh, repository, revision)
+    runs, statuses, blocked = check_records(gh, repository, revision)
     current_runs = latest_records(runs, check_key)
     current_statuses = latest_records(statuses, status_key)
-    any_evidence = False
+    any_evidence = bool(current_runs or current_statuses or blocked)
+    ready = True
     for context, integration in contexts:
         runs_for_context = [
             run
@@ -634,19 +784,24 @@ def check_state(
         status = current_statuses.get(context)
         matching_run = bool(runs_for_context)
         matching_status = status is not None
-        if matching_run or matching_status:
-            any_evidence = True
+        blocked_context = any(
+            key.partition("\0")[0] == context
+            and (integration is None or key.partition("\0")[2] == str(integration))
+            for key in blocked
+        )
+        if blocked_context:
+            ready = False
         if integration is not None and matching_status:
-            return False, any_evidence
+            ready = False
         if not matching_run and not matching_status:
-            return False, any_evidence
+            ready = False
         if matching_run and any(
             not passing_check(run, revision) for run in runs_for_context
         ):
-            return False, any_evidence
+            ready = False
         if matching_status and status is not None and not passing_status(status):
-            return False, any_evidence
-    return True, any_evidence
+            ready = False
+    return ready, any_evidence
 
 
 def checks_pass(
@@ -663,11 +818,14 @@ def checks_pass(
             if observed:
                 return passed, "required checks are pending or failing"
         else:
-            return observed_ci_state(gh, repository, merge)
+            passed, observed, reason = observed_ci_state(gh, repository, merge)
+            if observed:
+                return passed, reason
     if contexts:
         passed, _ = check_state(gh, repository, head, contexts)
         return passed, "required checks are pending or failing"
-    return observed_ci_state(gh, repository, head)
+    passed, _, reason = observed_ci_state(gh, repository, head)
+    return passed, reason
 
 
 def official_pr(

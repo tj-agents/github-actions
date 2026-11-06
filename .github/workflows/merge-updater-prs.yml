@@ -1,4 +1,4 @@
-name: Merge verified updater pull requests
+name: Merge Verified Updater Pull Requests
 
 on:
   schedule:
@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   merge:
+    name: Merge verified updater pull requests
     if: >-
       github.event_name != 'workflow_run'
       || (
@@ -45,8 +46,11 @@ jobs:
           client-id: ${{ vars.UPDATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.UPDATE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          permission-actions: read
+          permission-checks: read
           permission-contents: write
           permission-pull-requests: write
+          permission-statuses: read
           permission-workflows: write
       - name: Merge exactly generated updater pull requests
         env:
