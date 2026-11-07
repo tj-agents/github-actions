@@ -63,12 +63,12 @@ this action does not update them.
 Dedicated updater pull requests merge without human approval after their required checks pass. This includes
 both ordinary SHA refreshes and exact supported caller/bootstrap migrations. The central trusted
 `merge-updater-prs` workflow is the only automation that grants this exception. On its bounded ten-minute
-schedule, after central enrollment/bootstrap completion, or when dispatched manually, it scans eligible
+schedule, after central enrollment completion, or when dispatched manually, it scans eligible
 repositories and admits a candidate only when it is an open, non-draft same-repository pull request to that
 repository's default branch, from the verified immutable updater App identity, whose complete tree exactly
 matches a replay of the trusted generator and whose current required checks pass.
 
-Events only wake a bounded scan: a central enrollment/bootstrap event must prove eligible default-branch
+Events only wake a bounded scan: a central enrollment event must prove eligible default-branch
 provenance before it can do so. The updater reads Actions, Checks and Commit statuses to verify the current
 pull-request event and required-check evidence. It does not trust a title, branch name, App-like login, hint,
 or changed-file allowlist by itself. A pending check, failed check, changed pull-request identity, or unavailable
@@ -132,15 +132,13 @@ progress per repository.
 
 When discovery finds no legacy secret metadata, an existing setup resumes through its protected central
 credentials after verifying the existing Apps, organization and repository identities, exact central
-environment default-branch protections and both protected secret metadata records. Setup dispatches the
-existing `enroll-publishers.yml` on the central repository's current default branch with `bootstrap=false`
-to enroll and authenticate the stored credentials before caller bootstrap. It verifies the exact returned
-run and attempt. Its `enroll` job, `Mint controller installation token` step and
-`Enroll eligible repositories` step must all succeed. Aggregate workflow success alone is insufficient.
-The owner process then dispatches `bootstrap=true` for the full enrollment and caller-bootstrap flow,
-requiring the same exact-run, attempt, job and step evidence.
-The boolean `bootstrap` dispatch input defaults to true; normal scheduled, push and manual runs retain
-the full flow.
+environment default-branch protections and both protected secret metadata records. Setup dispatches
+`enroll-publishers.yml` once on the central repository's current default branch, with no workflow inputs,
+to enroll and authenticate the stored credentials. It verifies the exact returned run and attempt against
+that branch's current head. Its `enroll` job, `Mint controller installation token` step and
+`Enroll eligible repositories` step must all succeed before setup completes. Aggregate workflow success
+alone is insufficient. Scheduled, push and manual runs perform enrollment only; they do not create or
+recreate publisher or updater callers, and setup does not dispatch a second caller-bootstrap run.
 
 Before dispatch, setup checks the existing App installations. Valid installations require no browser
 action. If an installation needs repository access or permission acceptance, setup opens its exact
@@ -152,10 +150,11 @@ workflow must authenticate the stored credentials.
 
 ```text
 Existing protected provisioning verified, no legacy secret metadata:
-dispatch bootstrap=false -> verify exact run/attempt and successful enroll job and required steps
-dispatch bootstrap=true -> verify exact run/attempt and successful enroll job and required steps -> complete
-either dispatch: waiting_for_enrollment carries its returned run URL
-failed/skipped evidence or timeout -> failed with run URL, no new key request
+dispatch once: ref=main, return_run_details=true, no inputs -> GitHub returns run 123
+waiting_for_enrollment carries https://github.com/tj-agents/github-actions/actions/runs/123
+matching run 123/current head/attempt + successful enroll job and both required steps -> complete
+wrong identity, failed/skipped evidence or timeout -> failed with run URL, no new key request
+neither result dispatches a caller-bootstrap run
 ```
 
 The native `!` command returning zero proves only that the Windows launcher returned successfully. Read
@@ -215,15 +214,14 @@ matching `.agents/plugins/template.json` or declares custom generated-file publi
 
 The central workflow checks both declarations at the same verified default-branch commit. It verifies exact
 branch restrictions before uploading a key and preserves additional deployment protections. Each supplied
-key authenticates as its intended App before upload. Bootstrap removes legacy unprotected updater secrets
+key authenticates as its intended App before upload. Owner setup removes legacy unprotected updater secrets
 after replacements are read back. Key values never appear in diagnostics or local enrollment state.
 
-Trusted central automation uses `scripts/enrollment.py` to enroll repositories and open a caller-bootstrap
-pull request through the same implementation. It checks only the central default branch, uses separate
-controller and repository-scoped updater tokens, and never executes consumer code. Its apply path requires
-the central repository's current default branch and a controller installation token. First token minting,
-post-merge publication and installed startup still require actual rollout verification; successful source
-checks do not establish them.
+Trusted central automation uses `scripts/enrollment.py` only to enroll repositories, never to open a
+caller-bootstrap pull request. Its apply path requires the central repository's current default branch
+and a controller installation token; the protected updater key authenticates as its intended App before
+upload, and consumer code is never executed. First token minting, post-merge publication and installed
+startup still require actual rollout verification; successful source checks do not establish them.
 
 For an existing fleet, `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>`
 prepares each repository caller without cloning repositories. Preparation writes caller files for review;

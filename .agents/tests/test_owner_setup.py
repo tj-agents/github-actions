@@ -826,28 +826,26 @@ def configured_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     }
     calls: list[tuple[str, str, Any]] = []
     runs = [completed]
-    dispatched: list[Any] = []
     events: list[str] = []
-    for run_id in (123, 124):
-        responses[central + f"/actions/runs/{run_id}/attempts/1/jobs"] = {
-            "jobs": [
-                {
-                    "run_id": run_id,
-                    "run_attempt": 1,
-                    "head_sha": "a" * 40,
-                    "name": "enroll",
-                    "status": "completed",
-                    "conclusion": "success",
-                    "steps": [
-                        {"name": name, "status": "completed", "conclusion": "success"}
-                        for name in (
-                            "Mint controller installation token",
-                            "Enroll eligible repositories",
-                        )
-                    ],
-                }
-            ]
-        }
+    responses[central + "/actions/runs/123/attempts/1/jobs"] = {
+        "jobs": [
+            {
+                "run_id": 123,
+                "run_attempt": 1,
+                "head_sha": "a" * 40,
+                "name": "enroll",
+                "status": "completed",
+                "conclusion": "success",
+                "steps": [
+                    {"name": name, "status": "completed", "conclusion": "success"}
+                    for name in (
+                        "Mint controller installation token",
+                        "Enroll eligible repositories",
+                    )
+                ],
+            }
+        ]
+    }
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert command[1] == "api", "configured recovery must not request a local key"
@@ -860,13 +858,10 @@ def configured_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         value: Any
         if method == "POST" and path.endswith("/dispatches"):
             assert data is not None
-            value = {"workflow_run_id": 123 + len(dispatched)}
-            dispatched.append(data)
-            events.append(f"dispatch:{data['inputs']['bootstrap']}")
-        elif path in (central + "/actions/runs/123", central + "/actions/runs/124"):
+            value = {"workflow_run_id": 123}
+            events.append("dispatch")
+        elif path == central + "/actions/runs/123":
             value = runs.pop(0) if len(runs) > 1 else runs[0]
-            if path.endswith("/124"):
-                value = {**value, "id": 124}
         else:
             assert path in responses, path
             value = responses[path]
@@ -923,15 +918,10 @@ def test_configured_rerun_uses_protected_keys_without_owner_prompts(
         (
             "POST",
             fixture.central + "/actions/workflows/enroll-publishers.yml/dispatches",
-            {
-                "ref": "main",
-                "return_run_details": True,
-                "inputs": {"bootstrap": bootstrap},
-            },
+            {"ref": "main", "return_run_details": True},
         )
-        for bootstrap in (False, True)
     ]
-    assert fixture.events == ["dispatch:False", "dispatch:True"]
+    assert fixture.events == ["dispatch"]
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out", "skipped"])
@@ -1115,62 +1105,14 @@ def test_recovery_requires_exact_attempt_and_successful_authentication_steps(
         jobs[0]["steps"][step]["conclusion"] = "skipped"
     with pytest.raises(owner_setup.SetupError, match="enrollment"):
         owner_setup.setup("tj-agents", fixture.gh)
-    assert fixture.events == ["dispatch:False"]
+    assert fixture.events == ["dispatch"]
 
 
 def test_recovery_accepts_jobs_without_optional_attempt_metadata(
     configured_setup: SimpleNamespace,
 ) -> None:
     fixture = configured_setup
-    for run_id in (123, 124):
-        fixture.responses[fixture.central + f"/actions/runs/{run_id}/attempts/1/jobs"][
-            "jobs"
-        ][0].pop("run_attempt")
+    fixture.responses[fixture.central + "/actions/runs/123/attempts/1/jobs"]["jobs"][
+        0
+    ].pop("run_attempt")
     owner_setup.setup("tj-agents", fixture.gh)
-
-
-def test_recovery_refreshes_the_head_before_bootstrap(
-    configured_setup: SimpleNamespace,
-) -> None:
-    fixture = configured_setup
-    fixture.runs[:] = [
-        fixture.completed,
-        {**fixture.completed, "head_sha": "b" * 40},
-    ]
-    fixture.responses[fixture.central + "/actions/runs/124/attempts/1/jobs"]["jobs"][0][
-        "head_sha"
-    ] = "b" * 40
-
-    def progress(message: str) -> None:
-        if message == "Bootstrapping callers with the verified updater access":
-            fixture.responses[fixture.central + "/commits/main"]["sha"] = "b" * 40
-
-    owner_setup.setup("tj-agents", fixture.gh, progress=progress)
-
-
-def test_failed_bootstrap_preserves_verified_keys_and_its_own_run_url(
-    configured_setup: SimpleNamespace,
-    tmp_path: Path,
-) -> None:
-    fixture = configured_setup
-    fixture.runs[:] = [
-        fixture.completed,
-        {**fixture.completed, "conclusion": "failure"},
-    ]
-    path = tmp_path / "result.json"
-    with (
-        mock.patch.object(owner_setup, "GitHub", return_value=fixture.gh),
-        mock.patch.object(owner_setup, "app_key") as key_prompt,
-    ):
-        assert (
-            owner_setup.main(
-                ["--owner", "tj-agents", "--apply", "--result-file", str(path)],
-                environment={},
-            )
-            == 1
-        )
-    key_prompt.assert_not_called()
-    result = json.loads(path.read_text(encoding="utf-8"))
-    assert result["state"] == "failed"
-    assert result["action"]["url"].endswith("/runs/124")
-    assert fixture.events == ["dispatch:False", "dispatch:True"]

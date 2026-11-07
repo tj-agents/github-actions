@@ -1,0 +1,41 @@
+name: Renovate Acceptance
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: Renovate acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exercise the temporary required check
+        shell: python
+        env:
+          ACCEPTANCE_LABEL: ${{ github.event.label.name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          import os
+          import time
+
+          if (
+              os.environ["HEAD_REPOSITORY"] != os.environ["GITHUB_REPOSITORY"]
+              or not os.environ["HEAD_REF"].startswith("renovate/")
+          ):
+              raise SystemExit("Expected an in-repository Renovate pull request")
+
+          match os.environ["ACCEPTANCE_LABEL"]:
+              case "renovate-acceptance:pending":
+                  time.sleep(180)
+                  raise SystemExit("Pending observation window ended without success")
+              case "renovate-acceptance:fail":
+                  raise SystemExit("Controlled acceptance failure")
+              case "renovate-acceptance:pass":
+                  raise SystemExit(0)
+              case _:
+                  raise SystemExit("Expected an explicit acceptance label")
