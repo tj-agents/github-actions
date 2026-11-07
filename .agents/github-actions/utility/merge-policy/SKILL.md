@@ -44,12 +44,12 @@ PR Tommy pushed himself needs an approval from someone else. The bot account mus
 admin: that, not this script, stops an agent from merging past the policy or applying a ruleset.
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
-The updater App's bypass on the merge-policy ruleset, for generated publication, is declared alongside the
-rest of the ruleset in tj-agents/github's `github:configuration` Terraform workspace, not by this utility.
-The [publication setup](../publish-update/SKILL.md#generated-updater-pull-requests) owns the narrowly scoped
-automatic-merge exception for verified generator output, including bootstrap migrations. It does not turn off
-approval for ordinary PRs. Merely finding an App with a conventional name or receiving a publication hint
-grants no bypass or merge authority.
+Hosted Mend Renovate produces dependency PRs under its own installed identity. Its dependency check and any
+no-human-review path are explicit configuration in tj-agents/github's `github:configuration` workspace;
+they are not a ruleset bypass granted by this utility. Ordinary source and agent-authored PRs continue to
+use the policy above. The existing protected generated-publication App grant is also declared by that
+settings owner, separately from Renovate's check and no-human-review path. A publication hint, an App name,
+or a Renovate event grants no merge authority.
 
 ## Commands
 
@@ -65,8 +65,8 @@ python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.githu
 itself is Terraform's job in tj-agents/github's `github:configuration`, not this script.
 
 `check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
-must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and
-2 on an invalid policy or failed API call. In CI, call the composite action pinned to a commit SHA:
+must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and 2 on an
+invalid policy or failed API call. In CI, call the composite action pinned to a commit SHA:
 
 ```yaml
 - uses: tj-agents/github-actions/.github/actions/merge-policy-check@<sha> # vX.Y.Z
