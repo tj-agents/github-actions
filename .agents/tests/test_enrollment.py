@@ -340,24 +340,23 @@ def test_matrix_output_contains_only_sorted_basename_json(tmp_path: Path) -> Non
         )
 
 
-def test_central_workflow_separates_credentials_and_checks_exact_default_branch() -> (
-    None
-):
+def test_central_workflow_runs_only_protected_enrollment() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
     assert "environment: update-enrollment" in source
     assert "cancel-in-progress: false" in source
-    assert source.count("github.event.repository.default_branch") == 2
+    assert "workflow_dispatch:" in source
+    assert "schedule:" in source
+    assert "push:" in source
+    assert source.count("github.event.repository.default_branch") == 1
     assert "permission-administration: write" in source
     assert "permission-environments: write" in source
     assert "permission-secrets: read" in source
-    assert "permission-workflows: write" in source
     assert "secrets.ENROLLMENT_APP_PRIVATE_KEY" in source
     assert "secrets.UPDATE_APP_PRIVATE_KEY" in source
-    assert "path: automation" in source and "path: consumer" in source
-    assert "repositories: ${{ matrix.name }}" in source
-    assert '--matrix-output "$GITHUB_OUTPUT"' in source
     assert "persist-credentials: false" in source
-    assert "uses: ./automation/.github/actions/update-pins" in source
+    assert "bootstrap" not in source
+    assert "matrix" not in source
+    assert "update-pins" not in source
 
 
 def test_existing_environment_deployment_protection_is_preserved() -> None:
