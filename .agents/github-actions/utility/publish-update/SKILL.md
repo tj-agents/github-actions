@@ -137,8 +137,8 @@ existing `enroll-publishers.yml` on the central repository's current default bra
 to enroll and authenticate the stored credentials before caller bootstrap. It verifies the exact returned
 run and attempt. Its `enroll` job, `Mint controller installation token` step and
 `Enroll eligible repositories` step must all succeed. Aggregate workflow success alone is insufficient.
-The owner process then reconciles organization ruleset bypasses and dispatches `bootstrap=true` for the
-full enrollment and caller-bootstrap flow, requiring the same exact-run, attempt, job and step evidence.
+The owner process then dispatches `bootstrap=true` for the full enrollment and caller-bootstrap flow,
+requiring the same exact-run, attempt, job and step evidence.
 The boolean `bootstrap` dispatch input defaults to true; normal scheduled, push and manual runs retain
 the full flow.
 
@@ -153,7 +153,6 @@ workflow must authenticate the stored credentials.
 ```text
 Existing protected provisioning verified, no legacy secret metadata:
 dispatch bootstrap=false -> verify exact run/attempt and successful enroll job and required steps
-reconcile organization ruleset bypasses
 dispatch bootstrap=true -> verify exact run/attempt and successful enroll job and required steps -> complete
 either dispatch: waiting_for_enrollment carries its returned run URL
 failed/skipped evidence or timeout -> failed with run URL, no new key request
@@ -215,11 +214,9 @@ matching `.agents/plugins/template.json` or declares custom generated-file publi
 ```
 
 The central workflow checks both declarations at the same verified default-branch commit. It verifies exact
-branch restrictions before uploading a key, preserves additional deployment protections, and reconciles
-each declared merge policy with the verified updater App bypass. Each supplied key authenticates as its
-intended App before upload.
-Bootstrap removes legacy unprotected updater secrets after replacements are read back and before new
-bypass grants. Key values never appear in diagnostics or local enrollment state.
+branch restrictions before uploading a key and preserves additional deployment protections. Each supplied
+key authenticates as its intended App before upload. Bootstrap removes legacy unprotected updater secrets
+after replacements are read back. Key values never appear in diagnostics or local enrollment state.
 
 Trusted central automation uses `scripts/enrollment.py` to enroll repositories and open a caller-bootstrap
 pull request through the same implementation. It checks only the central default branch, uses separate

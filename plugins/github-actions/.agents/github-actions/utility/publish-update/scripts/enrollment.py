@@ -6,7 +6,6 @@ Requires Python 3.12+, the locked project environment and the GitHub CLI.
 
 import argparse
 import base64
-import importlib.util
 import json
 import os
 import re
@@ -498,53 +497,6 @@ def legacy_key_locations(
     return exposed
 
 
-def reconcile_policy(gh: Any, repository: str, app_id: int) -> str:
-    """Render the declared policy with the enrolled updater, using trusted code only."""
-    branch = gh.api(f"repos/{repository}")["default_branch"]
-    head = gh.api(f"repos/{repository}/commits/{quote(branch, safe='')}")["sha"]
-    content = gh.optional(
-        f"repos/{repository}/contents/.github/merge-policy.json?ref={head}"
-    )
-    if content is None:
-        return "undeclared"
-    script = (
-        Path(__file__).resolve().parents[2] / "merge-policy/scripts/merge_policy.py"
-    )
-    spec = importlib.util.spec_from_file_location("enrollment_merge_policy", script)
-    if spec is None or spec.loader is None:
-        raise EnrollmentError("the trusted merge-policy implementation is missing")
-    policy_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(policy_module)
-    try:
-        policy = policy_module.validate_policy(
-            json.loads(base64.b64decode(content["content"]).decode("utf-8")),
-            f"{repository}/.github/merge-policy.json",
-        )
-    except (KeyError, TypeError, ValueError, policy_module.PolicyError) as error:
-        raise EnrollmentError(f"{repository} has an invalid merge policy") from error
-    desired = policy_module.ruleset(policy, updater_app=app_id)
-    rulesets = [
-        item
-        for item in pages(gh, f"repos/{repository}/rulesets")
-        if item.get("name") == "merge-policy"
-        and item.get("source_type", "Repository") == "Repository"
-    ]
-    if len(rulesets) > 1:
-        raise EnrollmentError(f"{repository} has duplicate merge-policy rulesets")
-    path = f"repos/{repository}/rulesets"
-    if rulesets:
-        path += f"/{rulesets[0]['id']}"
-        if policy_module.matches_owned(gh.api(path), desired):
-            return "current"
-    actual = gh.api(path, "PUT" if rulesets else "POST", desired)
-    if not isinstance(actual, dict) or not isinstance(actual.get("id"), int):
-        raise EnrollmentError(f"{repository} merge-policy write has no identity")
-    readback = gh.api(f"repos/{repository}/rulesets/{actual['id']}")
-    if not policy_module.matches_owned(readback, desired):
-        raise EnrollmentError(f"{repository} merge-policy read-back failed")
-    return "updated" if rulesets else "created"
-
-
 def enroll(
     gh: Any,
     owner: str,
@@ -552,7 +504,6 @@ def enroll(
     updater_key: str,
     apply: bool = False,
     remove_legacy_secret: bool = False,
-    grant_bypass: bool = True,
     allow_exposed: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
@@ -602,11 +553,6 @@ def enroll(
                         f"{repository} repository-level {SECRET} removal "
                         "read-back failed"
                     )
-    if apply and grant_bypass:
-        for result in results:
-            result["merge_policy"] = reconcile_policy(
-                gh, result["repository"], updater_app_id
-            )
     return results
 
 
