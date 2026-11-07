@@ -33,15 +33,16 @@ Publisher topics and secrets remain private repository configuration. The public
 repository and change-category hints only; it does not grant consumer authority or auto-merge changes.
 Possession of an ntfy topic is not authentication or authority.
 
-The public `publish-update` and `update-pins` automation and skills are colocated here. Their canonical
-workflows own the guarded jobs; generated consumer workflow copies are thin triggers that call them with
-explicitly mapped secrets. Private consumer implementations remain in a separate private repository.
-Store App credentials in the protected `update-pins` environment, restrict that environment to the default
-branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
-secret. Install the App only in selected repositories. The pin updater changes a full-SHA `uses:` reference
-only when its action or workflow content differs at a forward default-branch revision; Core CI computes export
-and digest hashes. Credential enrollment and a live pull-request run remain
-unverified until a repository is configured.
+The public `publish-update` automation and skill are colocated here. Its generated consumer workflow is a
+thin trigger that calls the canonical guarded publisher with an explicitly mapped topic secret. Private consumer
+implementations remain in a separate private repository. Dependency updates are opt-in through the hosted
+Renovate preset: consumers add `.github/renovate.json` extending
+`github>tj-agents/github-actions:renovate-default` and Renovate opens the dependency pull requests.
+
+Store publication App credentials in the protected `update-pins` environment, restrict that environment to the
+default branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
+secret. Install the App only in selected repositories. Core CI computes export and digest hashes. Credential
+enrollment and a live pull-request run remain unverified until a repository is configured.
 
 Local agent adoption belongs to
 [machine:plugin-selection](https://github.com/tj-agents/core/blob/main/.agents/machine/utility/plugin-selection/SKILL.md),

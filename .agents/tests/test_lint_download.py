@@ -16,7 +16,7 @@ SPEC.loader.exec_module(SCRIPT)
 
 class WorkflowLintDownloadTests(TestCase):
     def download_request(self, url: str, token: str | None):
-        with patch.dict(os.environ, {} if token is None else {"GITHUB_TOKEN": token}, clear=True):
+        with patch.object(os, "environ", {} if token is None else {"GITHUB_TOKEN": token}):
             with patch.object(urllib.request, "urlopen", return_value=io.BytesIO(b"payload")) as urlopen:
                 self.assertEqual(b"payload", SCRIPT.download(url))
         return urlopen.call_args.args[0]
