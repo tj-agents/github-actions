@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Apply or check Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
+description: Render Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -11,10 +11,10 @@ provenance: house
 
 # Merge policy
 
-This utility implements Tommy's personal merge arrangement. Apply it only in explicitly personal
-repositories under `tj-agents`, `Concertable` or `tomjseery`; `apply`, `sync` and `reconcile` reject
-other owners before contacting GitHub. Employer repositories keep their own protections. Selecting
-GitHub Actions alone does not adopt this policy.
+This utility implements Tommy's personal merge arrangement. It applies only in explicitly personal
+repositories under `tj-agents`, `Concertable` or `tomjseery`. Employer repositories keep their own
+protections. Selecting GitHub Actions alone does not adopt this policy. Ruleset writes themselves are
+owned by tj-agents/github's `github:configuration` Terraform workspace, not this utility.
 
 A repository records whether a PR needs human approval before it can merge, not who is allowed to click
 merge, in `.github/merge-policy.json`:
@@ -44,7 +44,8 @@ PR Tommy pushed himself needs an approval from someone else. The bot account mus
 admin: that, not this script, stops an agent from merging past the policy or applying a ruleset.
 The ruleset is named `merge-policy`; other rulesets, such as a merge queue, are left alone.
 
-Protected updater enrollment may add its verified App as an always-bypass actor for generated publication.
+The updater App's bypass on the merge-policy ruleset, for generated publication, is declared alongside the
+rest of the ruleset in tj-agents/github's `github:configuration` Terraform workspace, not by this utility.
 The [publication setup](../publish-update/SKILL.md#generated-updater-pull-requests) owns the narrowly scoped
 automatic-merge exception for verified generator output, including bootstrap migrations. It does not turn off
 approval for ordinary PRs. Merely finding an App with a conventional name or receiving a publication hint
@@ -57,19 +58,11 @@ be signed in.
 
 ```text
 python -B scripts/merge_policy.py render --policy <repo>/.github/merge-policy.json
-python -B scripts/merge_policy.py apply --repo OWNER/NAME --policy <repo>/.github/merge-policy.json --dry-run
 python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.github/merge-policy.json
 ```
 
-`apply` enables auto-merge, so an approval or passing checks land a PR without a merge click, then
-creates or updates the ruleset. It needs repository admin rights. Tommy runs it, at repository
-creation and whenever the flag changes; agents use `--dry-run` only. GitHub Free enforces repository
-rulesets only on public repositories, so `apply` fails on a private repository in a Free organization.
-
-`sync --owner X [--owner Y]` covers every public, non-fork repository of those accounts: it reads each
-repository's `.github/merge-policy.json` and applies it wherever GitHub has drifted; a repository without
-the file is left alone. Declaring or changing the file is a PR, so turning a gate off needs Tommy's approval. It needs admin rights, so it
-runs as Tommy, never as an agent.
+`render` prints the ruleset a policy implies, for review. Creating, updating and reconciling the ruleset
+itself is Terraform's job in tj-agents/github's `github:configuration`, not this script.
 
 `check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
 must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and
@@ -78,5 +71,3 @@ must run on every PR, without path filters, or that PR can never merge. It exits
 ```yaml
 - uses: tj-agents/github-actions/.github/actions/merge-policy-check@<sha> # vX.Y.Z
 ```
-
-`reconcile --repo OWNER/NAME` is the background subscriber entry point. It resolves the current default-branch commit from GitHub, validates the policy at that commit and applies only a declared policy. It compares the complete owned ruleset before writing, including bypass actors. Core setup runs it as Tommy in response to hints and after an offline interval. The hint supplies no policy or ref.

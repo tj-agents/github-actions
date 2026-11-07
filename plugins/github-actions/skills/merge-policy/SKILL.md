@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Apply or check Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
+description: Render Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold

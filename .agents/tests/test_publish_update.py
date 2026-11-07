@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -10,7 +9,6 @@ from typing import Any
 from unittest import mock
 
 import pytest
-from test_merge_policy import HUMAN, FakeGh, merge_policy, rules
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
@@ -46,21 +44,6 @@ def completed(repository: str = "octo/example", branch: str = "main") -> dict[st
             "head_sha": "b" * 40,
             "head_repository": {"full_name": repository},
         },
-    }
-
-
-def reconcile_responses(policy: dict[str, Any] = HUMAN) -> dict[str, Any]:
-    return {
-        "repos/tj-agents/core": {"default_branch": "main"},
-        "repos/tj-agents/core/commits/main": {"sha": "b" * 40},
-        "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40: {
-            "content": base64.b64encode(json.dumps(policy).encode()).decode()
-        },
-        "repos/tj-agents/core/rulesets?per_page=100": [
-            {"name": "merge-policy", "id": 3}
-        ],
-        "repos/tj-agents/core/rulesets/3": merge_policy.ruleset(policy),
-        "repos/tj-agents/core/rules/branches/main?per_page=100": rules(policy),
     }
 
 
@@ -238,40 +221,6 @@ def test_retained_updater_only_accepts_existing_reusable_callers() -> None:
     assert "  schedule:" not in updater
     assert "  workflow_dispatch:" not in updater
     assert "repositories: ${{ inputs.repositories }}" in updater
-
-
-def test_current_committed_policy_is_read_at_authoritative_sha_without_write() -> None:
-    gh = FakeGh(reconcile_responses())
-    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "current"
-    assert not any("PUT" in command or "POST" in command for command, _ in gh.calls)
-
-
-def test_changed_bypass_is_repaired_even_when_effective_rules_look_current() -> None:
-    responses = reconcile_responses()
-    responses["repos/tj-agents/core/rulesets/3"] = {
-        **merge_policy.ruleset(HUMAN),
-        "bypass_actors": [],
-    }
-    gh = FakeGh(responses)
-    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "updated"
-    assert sum("PUT" in command for command, _ in gh.calls) == 1
-
-
-def test_no_file_never_invents_a_gate() -> None:
-    responses = reconcile_responses()
-    responses[
-        "repos/tj-agents/core/contents/.github/merge-policy.json?ref=" + "b" * 40
-    ] = 404
-    gh = FakeGh(responses)
-    assert merge_policy.reconcile("tj-agents/core", run=gh)["action"] == "undeclared"
-    assert len(gh.calls) == 3
-
-
-def test_hinted_owner_outside_scope_never_reaches_github() -> None:
-    gh = mock.Mock()
-    with pytest.raises(merge_policy.PolicyError):
-        merge_policy.reconcile("other/repo", run=gh)
-    gh.assert_not_called()
 
 
 @pytest.mark.parametrize("ending", ["\n", "\r\n"])
