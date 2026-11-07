@@ -789,7 +789,6 @@ def wait_for_enrollment(
     gh: GitHub,
     central: str,
     branch: str,
-    bootstrap: bool,
     request_action: Callable[[SetupAction], None],
     sleep: Callable[[float], None],
     clock: Callable[[], float],
@@ -798,16 +797,15 @@ def wait_for_enrollment(
     dispatched = gh.api(
         f"repos/{central}/actions/workflows/enroll-publishers.yml/dispatches",
         "POST",
-        {"ref": branch, "return_run_details": True, "inputs": {"bootstrap": bootstrap}},
+        {"ref": branch, "return_run_details": True},
     )
     run_id = dispatched.get("workflow_run_id") if isinstance(dispatched, dict) else None
     if type(run_id) is not int or run_id <= 0:
         raise SetupError("GitHub did not identify the dispatched enrollment run")
     url = f"https://github.com/{central}/actions/runs/{run_id}"
-    phase = "bootstrap" if bootstrap else "enrollment"
     action: SetupAction = {
         "kind": SetupActionKind.WAIT_FOR_ENROLLMENT,
-        "summary": f"Waiting for protected {phase} run {run_id}",
+        "summary": f"Waiting for protected enrollment run {run_id}",
         "locations": [central],
         "steps": [
             "The existing protected keys stay in GitHub Actions; no local PEM "
@@ -918,9 +916,7 @@ def resume_enrollment(
         )
     ensure_variable(gh, owner, updater["client_id"], variable)
     progress("Resuming enrollment with existing protected credentials")
-    wait_for_enrollment(gh, central, branch, False, request_action, sleep, clock)
-    progress("Bootstrapping callers with the verified updater access")
-    wait_for_enrollment(gh, central, branch, True, request_action, sleep, clock)
+    wait_for_enrollment(gh, central, branch, request_action, sleep, clock)
     return True
 
 
