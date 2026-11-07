@@ -205,17 +205,18 @@ def test_shared_renovate_preset_uses_native_dependency_management() -> None:
     }
 
 
-def test_canary_inherits_native_pr_automatic_merges() -> None:
+def test_repository_inherits_scheduled_native_pr_automatic_merges() -> None:
     preset = json.loads(RENOVATE_DEFAULT.read_text(encoding="utf-8"))
     canary = json.loads(RENOVATE_CONFIG.read_text(encoding="utf-8"))
     effective = {**preset, **canary}
     assert canary["extends"] == ["github>tj-agents/github-actions:renovate-default"]
     assert "automerge" not in canary
+    assert "schedule" not in canary
     assert effective["automerge"] is True
     assert effective["automergeType"] == "pr"
     assert effective["platformAutomerge"] is False
     assert effective["rebaseWhen"] == "behind-base-branch"
-    assert effective["schedule"] == ["at any time"]
+    assert effective["schedule"] == ["* 0-5 * * *"]
 
 
 def test_retained_updater_only_accepts_existing_reusable_callers() -> None:
