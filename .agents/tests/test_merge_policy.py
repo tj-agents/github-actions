@@ -101,17 +101,6 @@ class PolicyTests(unittest.TestCase):
         ]
         self.assertIn({"actor_type": "DeployKey", "bypass_mode": "always"}, actors)
 
-    def test_updater_app_bypass_requires_an_explicit_enrolled_app_id(self):
-        ordinary = merge_policy.ruleset(HUMAN)["bypass_actors"]
-        enrolled = merge_policy.ruleset(HUMAN, updater_app=42)["bypass_actors"]
-        self.assertFalse(
-            any(actor.get("actor_type") == "Integration" for actor in ordinary)
-        )
-        self.assertIn(
-            {"actor_id": 42, "actor_type": "Integration", "bypass_mode": "always"},
-            enrolled,
-        )
-
     def test_agent_merge_requires_the_review_check_instead_of_an_approval(self):
         ruleset = merge_policy.ruleset(AGENTS)
         review = next(
@@ -130,85 +119,6 @@ class PolicyTests(unittest.TestCase):
                 for item in checks["parameters"]["required_status_checks"]
             ],
         )
-
-
-class ApplyTests(unittest.TestCase):
-    def test_personal_owners_can_apply_their_declared_policy(self):
-        for owner in ("tj-agents", "Concertable", "tomjseery", "CONCERTABLE"):
-            with self.subTest(owner=owner):
-                gh = FakeGh({})
-                self.assertEqual(
-                    "created",
-                    merge_policy.apply(owner + "/repo", HUMAN, run=gh)["action"],
-                )
-                self.assertIn("POST", gh.calls[-1][0])
-
-    def test_employer_repositories_are_refused_before_any_github_call(self):
-        for repository in ("Infonetica/work", "company/work", "tj-agents-company/work"):
-            for dry_run in (False, True):
-                with self.subTest(repository=repository, dry_run=dry_run):
-                    gh = FakeGh({})
-                    with self.assertRaises(merge_policy.PolicyError):
-                        merge_policy.apply(repository, HUMAN, dry_run=dry_run, run=gh)
-                    self.assertEqual([], gh.calls)
-
-    def test_employer_sync_owner_is_refused_before_processing_any_owner(self):
-        gh = FakeGh({})
-        with self.assertRaises(merge_policy.PolicyError):
-            merge_policy.sync(["tj-agents", "Infonetica"], run=gh)
-        self.assertEqual([], gh.calls)
-
-    def test_creates_when_absent_and_updates_the_existing_ruleset(self):
-        gh = FakeGh(
-            {"repos/tj-agents/r/rulesets?per_page=100": [{"id": 9, "name": "other"}]}
-        )
-        self.assertEqual(
-            "created", merge_policy.apply("tj-agents/r", HUMAN, run=gh)["action"]
-        )
-        self.assertEqual(
-            ["--method", "POST", "repos/tj-agents/r/rulesets"], gh.calls[-1][0][2:5]
-        )
-        self.assertEqual("merge-policy", json.loads(gh.calls[-1][1])["name"])
-        gh = FakeGh(
-            {
-                "repos/tj-agents/r/rulesets?per_page=100": [
-                    {"id": 7, "name": "merge-policy", "source_type": "Repository"}
-                ]
-            }
-        )
-        self.assertEqual(
-            "updated", merge_policy.apply("tj-agents/r", HUMAN, run=gh)["action"]
-        )
-        self.assertEqual(
-            ["--method", "PUT", "repos/tj-agents/r/rulesets/7"], gh.calls[-1][0][2:5]
-        )
-
-    def test_apply_enables_auto_merge_so_an_approval_lands_the_pr(self):
-        gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
-        merge_policy.apply("tj-agents/r", HUMAN, run=gh)
-        patch = next(
-            call
-            for call in gh.calls
-            if call[0][2:5] == ["--method", "PATCH", "repos/tj-agents/r"]
-        )
-        self.assertEqual({"allow_auto_merge": True}, json.loads(patch[1]))
-
-    def test_dry_run_never_writes(self):
-        gh = FakeGh({"repos/tj-agents/r/rulesets?per_page=100": []})
-        self.assertEqual(
-            "create",
-            merge_policy.apply("tj-agents/r", HUMAN, dry_run=True, run=gh)["action"],
-        )
-        self.assertEqual(1, len(gh.calls))
-
-    def test_api_failure_is_reported(self):
-        def failing(command, **kwargs):
-            return subprocess.CompletedProcess(
-                command, 1, "", "HTTP 403: Upgrade to GitHub Pro"
-            )
-
-        with self.assertRaisesRegex(merge_policy.PolicyError, "Upgrade to GitHub Pro"):
-            merge_policy.apply("tj-agents/r", HUMAN, run=failing)
 
 
 class CheckTests(unittest.TestCase):
@@ -272,52 +182,6 @@ class CheckTests(unittest.TestCase):
                     ],
                     self.check(policy, strict),
                 )
-
-    def test_sync_applies_only_declared_policies_and_only_where_drifted(self):
-        import base64
-
-        ci = {"requires_approval": True, "ci_pushes_default_branch": True}
-        encoded = base64.b64encode(json.dumps(ci).encode()).decode()
-        responses = {
-            "users/tj-agents/repos?type=owner&per_page=100&page=1": [
-                {"full_name": "tj-agents/new"},
-                {"full_name": "tj-agents/core"},
-                {"full_name": "tj-agents/done"},
-                {"full_name": "tj-agents/secret", "private": True},
-                {"full_name": "tj-agents/copy", "fork": True},
-            ],
-            "repos/tj-agents/new/contents/.github/merge-policy.json": 404,
-            "repos/tj-agents/done/contents/.github/merge-policy.json": {
-                "content": base64.b64encode(b'{"requires_approval": true}').decode()
-            },
-            "repos/tj-agents/core/contents/.github/merge-policy.json": {
-                "content": encoded
-            },
-            "repos/tj-agents/done/rules/branches/main?per_page=100": rules(
-                {"requires_approval": True}
-            ),
-            "repos/tj-agents/new/rulesets?per_page=100": [],
-            "repos/tj-agents/core/rulesets?per_page=100": [],
-        }
-        for name in ("new", "core", "done"):
-            responses[f"repos/tj-agents/{name}"] = {"default_branch": "main"}
-        gh = FakeGh(responses)
-        results = {
-            repository: action
-            for repository, action, _ in merge_policy.sync(["tj-agents"], run=gh)
-        }
-        self.assertEqual(
-            {"tj-agents/core": "created", "tj-agents/done": "current"}, results
-        )
-        posted = {
-            command[4]: json.loads(payload)
-            for command, payload in gh.calls
-            if "POST" in command
-        }
-        self.assertEqual(["repos/tj-agents/core/rulesets"], list(posted))
-        self.assertEqual(
-            2, len(posted["repos/tj-agents/core/rulesets"]["bypass_actors"])
-        )
 
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:

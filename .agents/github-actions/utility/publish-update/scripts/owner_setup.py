@@ -244,43 +244,6 @@ class GitHub:
             )
         return json.loads(result.stdout) if result.stdout.strip() else None
 
-    def organization_rulesets(self, owner: str) -> list[dict[str, Any]]:
-        rulesets: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            path = f"orgs/{owner}/rulesets?per_page=100&page={page}"
-            result = self.call(["api", path, "--method", "GET"])
-            try:
-                data = json.loads(result.stdout)
-            except ValueError:
-                data = None
-            if result.returncode:
-                if (
-                    page == 1
-                    and isinstance(data, dict)
-                    and str(data.get("status")) == "403"
-                    and data.get("message")
-                    == "Upgrade to GitHub Team to enable this feature."
-                ):
-                    print(
-                        "Organization rulesets are unavailable on this GitHub plan; "
-                        "declared repository policies remain enforced.",
-                        flush=True,
-                    )
-                    return []
-                raise SetupError(
-                    f"gh api GET {path} failed: "
-                    f"{(result.stderr or result.stdout).strip()[:300]}"
-                )
-            if not isinstance(data, list) or any(
-                not isinstance(item, dict) for item in data
-            ):
-                raise SetupError(f"invalid organization ruleset response for {owner}")
-            rulesets.extend(data)
-            if len(data) < 100:
-                return rulesets
-            page += 1
-
     def optional(self, path: str, absent: tuple[str, ...] = ("HTTP 404",)) -> Any:
         result = self.call(["api", path, "--method", "GET"])
         if result.returncode == 0:
@@ -340,24 +303,6 @@ def granted(permissions: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def default_branch_ruleset(ruleset: Mapping[str, Any]) -> bool:
-    include = ((ruleset.get("conditions") or {}).get("ref_name") or {}).get(
-        "include"
-    ) or []
-    return ruleset.get("target", "branch") == "branch" and bool(
-        {"~DEFAULT_BRANCH", "~ALL"} & set(include)
-    )
-
-
-def bypasses(ruleset: Mapping[str, Any], app_id: int) -> bool:
-    return any(
-        actor.get("actor_type") == "Integration"
-        and actor.get("actor_id") == app_id
-        and actor.get("bypass_mode") == "always"
-        for actor in ruleset.get("bypass_actors") or []
-    )
-
-
 def discover(
     gh: GitHub, owner: str, progress: Callable[[str], None] = print_progress
 ) -> dict[str, Any]:
@@ -380,7 +325,6 @@ def discover(
         if len(batch) < 100:
             break
         page += 1
-    rulesets = gh.organization_rulesets(owner)
     updater, controller = app_slug(owner), controller_slug(owner)
     progress("Checking existing Apps, updater configuration and exposed key locations")
     return {
@@ -401,7 +345,6 @@ def discover(
         "legacy_repositories": load_enrollment().legacy_key_locations(
             load_enrollment().GitHub(gh.run), owner, progress=progress
         ),
-        "rulesets": rulesets,
     }
 
 
@@ -680,58 +623,6 @@ def put_env_secret(
         item.get("name") == name for item in (gh.api(path) or {}).get("secrets", [])
     ):
         raise SetupError(f"{repository}/{environment} secret metadata read-back failed")
-
-
-def ensure_org_rulesets(
-    gh: GitHub, owner: str, app_id: int, rulesets: list[Mapping[str, Any]]
-) -> list[Any]:
-    covered: list[Any] = []
-    for summary in rulesets:
-        path = f"orgs/{owner}/rulesets/{summary['id']}"
-        ruleset = gh.api(path)
-        if not default_branch_ruleset(ruleset):
-            continue
-        if not bypasses(ruleset, app_id):
-            actors = [
-                actor
-                for actor in ruleset.get("bypass_actors") or []
-                if not (
-                    actor.get("actor_type") == "Integration"
-                    and actor.get("actor_id") == app_id
-                )
-            ]
-            gh.api(
-                path,
-                "PUT",
-                {
-                    **{
-                        key: ruleset[key]
-                        for key in (
-                            "name",
-                            "target",
-                            "enforcement",
-                            "conditions",
-                            "rules",
-                        )
-                        if key in ruleset
-                    },
-                    "bypass_actors": [
-                        *actors,
-                        {
-                            "actor_id": app_id,
-                            "actor_type": "Integration",
-                            "bypass_mode": "always",
-                        },
-                    ],
-                },
-            )
-            if not bypasses(gh.api(path), app_id):
-                raise SetupError(
-                    f"organization ruleset {ruleset.get('name')} bypass "
-                    "read-back failed"
-                )
-        covered.append(ruleset.get("name"))
-    return covered
 
 
 def confirm_legacy_rotation(
@@ -1028,8 +919,6 @@ def resume_enrollment(
     ensure_variable(gh, owner, updater["client_id"], variable)
     progress("Resuming enrollment with existing protected credentials")
     wait_for_enrollment(gh, central, branch, False, request_action, sleep, clock)
-    progress("Reconciling updater organization rulesets after verified enrollment")
-    ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
     progress("Bootstrapping callers with the verified updater access")
     wait_for_enrollment(gh, central, branch, True, request_action, sleep, clock)
     return True
@@ -1155,7 +1044,6 @@ def setup(
         updater_key,
         apply=True,
         remove_legacy_secret=True,
-        grant_bypass=False,
         allow_exposed=legacy_rotation,
         progress=progress,
     )
@@ -1165,16 +1053,8 @@ def setup(
             raise SetupError(
                 f"exposed organization secret {SECRET} removal read-back failed"
             )
-    progress("Reconciling updater bypasses and declared repository policies")
-    covered = ensure_org_rulesets(gh, owner, updater["id"], state["rulesets"])
-    for result in results:
-        progress(f"Reconciling the declared policy for {result['repository']}")
-        result["merge_policy"] = enrollment.reconcile_policy(
-            enrollment.GitHub(gh.run), result["repository"], updater["id"]
-        )
     print(
-        f"Owner setup complete: {len(results)} eligible repositories enrolled; "
-        f"org rulesets {covered}",
+        f"Owner setup complete: {len(results)} eligible repositories enrolled",
         flush=True,
     )
 
@@ -1203,10 +1083,6 @@ def preview(owner: str) -> None:
     )
     print(
         f"- store the enrollment key only in {owner}/github-actions/update-enrollment"
-    )
-    print(
-        "- add the updater to supported organization rulesets and declared "
-        "repository policies only for enrolled repositories"
     )
     print("Nothing is written until --apply is supplied.")
 

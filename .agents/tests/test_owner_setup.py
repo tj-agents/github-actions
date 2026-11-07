@@ -744,154 +744,6 @@ def test_confirmed_rotation_relaxes_only_the_central_publisher_environment(
     gh.set_secret.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "status", [403, "403"], ids=["integer-status", "string-status"]
-)
-def test_unavailable_organization_rulesets_preserve_repository_policy_setup(
-    status: int | str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    response = {
-        "status": status,
-        "message": "Upgrade to GitHub Team to enable this feature.",
-    }
-    run = mock.Mock(
-        return_value=subprocess.CompletedProcess(
-            [], 1, json.dumps(response), "HTTP 403"
-        )
-    )
-    assert owner_setup.GitHub(run).organization_rulesets("tj-agents") == []
-    assert "repository policies remain enforced" in capsys.readouterr().out
-    assert run.call_count == 1
-    assert run.call_args.args[0] == [
-        "gh",
-        "api",
-        "--hostname",
-        "github.com",
-        "orgs/tj-agents/rulesets?per_page=100&page=1",
-        "--method",
-        "GET",
-    ]
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        {"status": "403", "message": "Resource not accessible by integration"},
-        {"status": "401", "message": "Upgrade to GitHub Team to enable this feature."},
-        {"status": "403", "message": "Forbidden"},
-    ],
-)
-def test_organization_ruleset_permission_errors_still_abort(
-    response: dict[str, str],
-) -> None:
-    run = mock.Mock(
-        return_value=subprocess.CompletedProcess(
-            [], 1, json.dumps(response), "HTTP error"
-        )
-    )
-    with pytest.raises(owner_setup.SetupError, match="orgs/tj-agents/rulesets"):
-        owner_setup.GitHub(run).organization_rulesets("tj-agents")
-
-
-def test_organization_rulesets_are_paginated_without_dropping_rules() -> None:
-    first = [{"id": value} for value in range(100)]
-    final = [{"id": 100}]
-    run = mock.Mock(
-        side_effect=[
-            subprocess.CompletedProcess([], 0, json.dumps(first), ""),
-            subprocess.CompletedProcess([], 0, json.dumps(final), ""),
-        ]
-    )
-    assert owner_setup.GitHub(run).organization_rulesets("tj-agents") == first + final
-    assert "orgs/tj-agents/rulesets?per_page=100&page=2" in run.call_args.args[0]
-
-
-def test_late_plan_error_never_discards_partially_discovered_organization_rules() -> (
-    None
-):
-    run = mock.Mock(
-        side_effect=[
-            subprocess.CompletedProcess(
-                [], 0, json.dumps([{"id": value} for value in range(100)]), ""
-            ),
-            subprocess.CompletedProcess(
-                [],
-                1,
-                json.dumps(
-                    {
-                        "status": "403",
-                        "message": "Upgrade to GitHub Team to enable this feature.",
-                    }
-                ),
-                "HTTP 403",
-            ),
-        ]
-    )
-    with pytest.raises(owner_setup.SetupError, match="page=2"):
-        owner_setup.GitHub(run).organization_rulesets("tj-agents")
-
-
-@pytest.mark.parametrize("body", ['{"rules": []}', "null", "[1]", "invalid JSON"])
-def test_malformed_organization_ruleset_response_is_rejected(body: str) -> None:
-    run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, body, ""))
-    with pytest.raises(
-        owner_setup.SetupError, match="invalid organization ruleset response"
-    ):
-        owner_setup.GitHub(run).organization_rulesets("tj-agents")
-
-
-def test_empty_organization_rulesets_do_not_skip_repository_protections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    owner = "tj-agents"
-    updater = {
-        "id": 42,
-        "client_id": "Iv1.updater",
-        "owner": {"login": owner},
-        "permissions": owner_setup.PERMISSIONS,
-    }
-    controller = {
-        "id": 90,
-        "client_id": "Iv1.controller",
-        "owner": {"login": owner},
-        "permissions": owner_setup.CONTROLLER_PERMISSIONS,
-    }
-    state: dict[str, Any] = {
-        "legacy_org_secret": None,
-        "legacy_repositories": [],
-        "rulesets": [],
-        "slug": owner + "-pin-updater",
-        "controller_slug": owner + "-enrollment-controller",
-        "app": updater,
-        "controller": controller,
-        "variable": None,
-    }
-    monkeypatch.setattr(owner_setup, "discover", lambda *_: state)
-    monkeypatch.setattr(owner_setup, "app_key", lambda *_, **__: "fixture-key")
-    for name in (
-        "ensure_installation",
-        "ensure_variable",
-        "set_repo_variable",
-        "put_env_secret",
-    ):
-        monkeypatch.setattr(owner_setup, name, mock.Mock())
-    bridge = SimpleNamespace(
-        GitHub=mock.Mock(return_value=object()),
-        verify_app_key=mock.Mock(),
-        protected=mock.Mock(),
-        enroll=mock.Mock(return_value=[{"repository": "tj-agents/example"}]),
-        reconcile_policy=mock.Mock(return_value={"action": "updated"}),
-    )
-    monkeypatch.setattr(owner_setup, "load_enrollment", lambda: bridge)
-    gh = mock.Mock()
-    gh.api.return_value = {"default_branch": "main"}
-    owner_setup.setup(owner, gh)
-    assert bridge.verify_app_key.call_count == 2
-    assert bridge.protected.call_count == 2
-    assert bridge.enroll.call_args.kwargs["grant_bypass"] is False
-    bridge.reconcile_policy.assert_called_once_with(mock.ANY, "tj-agents/example", 42)
-
-
 @pytest.fixture
 def configured_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     updater = {
@@ -915,7 +767,6 @@ def configured_setup(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         "controller_slug": controller["slug"],
         "legacy_org_secret": None,
         "legacy_repositories": [],
-        "rulesets": [],
         "variable": {"value": "Iv1.updater", "visibility": "all"},
     }
     central = "repos/tj-agents/github-actions"
@@ -1051,20 +902,15 @@ def test_configured_rerun_uses_protected_keys_without_owner_prompts(
     def observe(_: float) -> None:
         receipts.append(json.loads(result_file.read_text(encoding="utf-8")))
 
-    with mock.patch.object(
-        owner_setup,
-        "ensure_org_rulesets",
-        side_effect=lambda *_: fixture.events.append("bypasses"),
-    ):
-        owner_setup.setup(
-            "tj-agents",
-            fixture.gh,
-            open_url=browser,
-            prompt=prompt,
-            sleep=observe,
-            progress=reporter.progress,
-            request_action=reporter.awaiting,
-        )
+    owner_setup.setup(
+        "tj-agents",
+        fixture.gh,
+        open_url=browser,
+        prompt=prompt,
+        sleep=observe,
+        progress=reporter.progress,
+        request_action=reporter.awaiting,
+    )
     browser.assert_not_called()
     prompt.assert_not_called()
     assert receipts[0]["action"]["kind"] == "waiting_for_enrollment"
@@ -1085,7 +931,7 @@ def test_configured_rerun_uses_protected_keys_without_owner_prompts(
         )
         for bootstrap in (False, True)
     ]
-    assert fixture.events == ["dispatch:False", "bypasses", "dispatch:True"]
+    assert fixture.events == ["dispatch:False", "dispatch:True"]
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out", "skipped"])
@@ -1233,12 +1079,8 @@ def test_successful_workflow_with_skipped_enrollment_is_not_completion(
             }
         ]
     }
-    with (
-        mock.patch.object(owner_setup, "ensure_org_rulesets") as reconcile,
-        pytest.raises(owner_setup.SetupError, match="enrollment job"),
-    ):
+    with pytest.raises(owner_setup.SetupError, match="enrollment job"):
         owner_setup.setup("tj-agents", fixture.gh)
-    reconcile.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -1271,12 +1113,8 @@ def test_recovery_requires_exact_attempt_and_successful_authentication_steps(
     else:
         step = 0 if invalid == "controller_step" else 1
         jobs[0]["steps"][step]["conclusion"] = "skipped"
-    with (
-        mock.patch.object(owner_setup, "ensure_org_rulesets") as reconcile,
-        pytest.raises(owner_setup.SetupError, match="enrollment"),
-    ):
+    with pytest.raises(owner_setup.SetupError, match="enrollment"):
         owner_setup.setup("tj-agents", fixture.gh)
-    reconcile.assert_not_called()
     assert fixture.events == ["dispatch:False"]
 
 
@@ -1288,8 +1126,7 @@ def test_recovery_accepts_jobs_without_optional_attempt_metadata(
         fixture.responses[fixture.central + f"/actions/runs/{run_id}/attempts/1/jobs"][
             "jobs"
         ][0].pop("run_attempt")
-    with mock.patch.object(owner_setup, "ensure_org_rulesets"):
-        owner_setup.setup("tj-agents", fixture.gh)
+    owner_setup.setup("tj-agents", fixture.gh)
 
 
 def test_recovery_refreshes_the_head_before_bootstrap(
@@ -1304,13 +1141,11 @@ def test_recovery_refreshes_the_head_before_bootstrap(
         "head_sha"
     ] = "b" * 40
 
-    def advance_head(*_: Any) -> None:
-        fixture.responses[fixture.central + "/commits/main"]["sha"] = "b" * 40
+    def progress(message: str) -> None:
+        if message == "Bootstrapping callers with the verified updater access":
+            fixture.responses[fixture.central + "/commits/main"]["sha"] = "b" * 40
 
-    with mock.patch.object(
-        owner_setup, "ensure_org_rulesets", side_effect=advance_head
-    ):
-        owner_setup.setup("tj-agents", fixture.gh)
+    owner_setup.setup("tj-agents", fixture.gh, progress=progress)
 
 
 def test_failed_bootstrap_preserves_verified_keys_and_its_own_run_url(
@@ -1326,11 +1161,6 @@ def test_failed_bootstrap_preserves_verified_keys_and_its_own_run_url(
     with (
         mock.patch.object(owner_setup, "GitHub", return_value=fixture.gh),
         mock.patch.object(owner_setup, "app_key") as key_prompt,
-        mock.patch.object(
-            owner_setup,
-            "ensure_org_rulesets",
-            side_effect=lambda *_: fixture.events.append("bypasses"),
-        ),
     ):
         assert (
             owner_setup.main(
@@ -1343,4 +1173,4 @@ def test_failed_bootstrap_preserves_verified_keys_and_its_own_run_url(
     result = json.loads(path.read_text(encoding="utf-8"))
     assert result["state"] == "failed"
     assert result["action"]["url"].endswith("/runs/124")
-    assert fixture.events == ["dispatch:False", "bypasses", "dispatch:True"]
+    assert fixture.events == ["dispatch:False", "dispatch:True"]
