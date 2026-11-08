@@ -18,28 +18,19 @@ Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
   `.github/actions/merge-policy-check` reports drift in CI.
 
 - Utility: [github-actions:publish-update](.agents/github-actions/utility/publish-update/SKILL.md)
-  prepares explicitly adopted repository-update publishers. Consumers retain separate authority for
-  every action they take after receiving a hint.
+  bootstraps the organization's regeneration App credentials and enrolls eligible repositories.
 
 ## Personal automation and employer projects
 
 Selecting this package makes its utilities available; it does not invoke them or adopt their personal
-configuration. The generic scaffold generates CI and deployment files without a publisher or
-merge-policy declaration. Publisher enrollment and personal ruleset application follow their linked
-utility scopes. For example, scaffolding a service produces no `publish-update.yml` or
-`.github/merge-policy.json`.
+configuration. The generic scaffold generates CI and deployment files without a merge-policy declaration.
+Credential enrollment and personal ruleset application follow their linked utility scopes. For example,
+scaffolding a service produces no `.github/merge-policy.json`.
 
-Publisher topics and secrets remain private repository configuration. The public publisher workflow sends
-repository and change-category hints only; it does not grant consumer authority or auto-merge changes.
-Possession of an ntfy topic is not authentication or authority.
+Dependency updates are opt-in through the hosted Renovate preset: consumers add `.github/renovate.json`
+extending `github>tj-agents/github-actions:renovate-default` and Renovate opens the dependency pull requests.
 
-The public `publish-update` automation and skill are colocated here. Its generated consumer workflow is a
-thin trigger that calls the canonical guarded publisher with an explicitly mapped topic secret. Private consumer
-implementations remain in a separate private repository. Dependency updates are opt-in through the hosted
-Renovate preset: consumers add `.github/renovate.json` extending
-`github>tj-agents/github-actions:renovate-default` and Renovate opens the dependency pull requests.
-
-Store publication App credentials in the protected `update-pins` environment, restrict that environment to the
+Store regeneration App credentials in the protected `update-pins` environment, restrict that environment to the
 default branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
 secret. Install the App only in selected repositories. Core CI computes export and digest hashes. Credential
 enrollment and a live pull-request run remain unverified until a repository is configured.
