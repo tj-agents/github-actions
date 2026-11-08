@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".agents/github-actions/utility/publish-update/scripts"
 PUBLISH = ROOT / ".github/actions/publish-update/publish.py"
 PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish-update.yml"
-UPDATER_WORKFLOW = ROOT / ".github/workflows/update-pins.yml"
 RENOVATE_DEFAULT = ROOT / "renovate-default.json"
 RENOVATE_CONFIG = ROOT / ".github/renovate.json"
 
@@ -29,7 +28,6 @@ def load(name: str, path: Path) -> Any:
 
 caller = load("caller", SCRIPTS / "caller.py")
 publish = load("publish", PUBLISH)
-updater = load("publisher_updater", ROOT / ".github/actions/update-pins/update_pins.py")
 
 
 def completed(repository: str = "octo/example", branch: str = "main") -> dict[str, Any]:
@@ -142,6 +140,7 @@ def test_uniform_caller_waits_for_ci_and_has_read_only_permissions() -> None:
     assert (
         "uses: tj-agents/github-actions/.github/workflows/publish-update.yml@"
         + "a" * 40
+        + " # main"
         in value
     )
     assert "workflow_run:" in value
@@ -156,9 +155,8 @@ def test_uniform_caller_waits_for_ci_and_has_read_only_permissions() -> None:
         caller.render("main")
 
 
-def test_canonical_workflows_guard_verified_origin_and_secret_contracts() -> None:
+def test_canonical_workflow_guards_verified_origin_and_secret_contract() -> None:
     publisher = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-    updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
     assert (
         "workflow_call:\n    secrets:\n      UPDATE_TOPIC:\n        required: false"
         in publisher
@@ -171,10 +169,6 @@ def test_canonical_workflows_guard_verified_origin_and_secret_contracts() -> Non
     assert "uses: $/.github/actions/publish-update" in publisher
     assert "tj-agents/github-actions/.github/actions/publish-update@" not in publisher
     assert "actions/checkout" not in publisher
-    assert "UPDATE_APP_PRIVATE_KEY:\n        required: true" in updater
-    assert "permission-contents: write" in updater
-    assert "permission-pull-requests: write" in updater
-    assert "permission-workflows: write" in updater
 
 
 def test_shared_renovate_preset_uses_native_dependency_management() -> None:
@@ -217,96 +211,3 @@ def test_repository_inherits_scheduled_native_pr_automatic_merges() -> None:
     assert effective["platformAutomerge"] is False
     assert effective["rebaseWhen"] == "behind-base-branch"
     assert effective["schedule"] == ["* 0-5 * * *"]
-
-
-def test_retained_updater_only_accepts_existing_reusable_callers() -> None:
-    updater = UPDATER_WORKFLOW.read_text(encoding="utf-8")
-    assert "  workflow_call:" in updater
-    assert "  schedule:" not in updater
-    assert "  workflow_dispatch:" not in updater
-    assert "repositories: ${{ inputs.repositories }}" in updater
-
-
-@pytest.mark.parametrize("ending", ["\n", "\r\n"])
-def test_scheduled_updates_regenerate_an_enrolled_caller(
-    tmp_path: Path, ending: str
-) -> None:
-    path = tmp_path / ".github/workflows/publish-update.yml"
-    path.parent.mkdir(parents=True)
-    before = (
-        caller.render("a" * 40)
-        .replace(
-            "  workflow_run:\n    workflows: [ci]\n    types: [completed]\n",
-            "  push:\n",
-        )
-        .replace("\n", ending)
-    )
-    path.write_bytes(before.encode())
-    summary = updater.update(
-        tmp_path,
-        ["tj-agents/github-actions"],
-        files=[".github/workflows/publish-update.yml"],
-        resolver=lambda _: "b" * 40,
-        comparer=lambda *_: None,
-        content_comparer=lambda *_: True,
-    )
-    assert summary["changed"]
-    assert path.read_bytes().decode() == caller.render("b" * 40).replace("\n", ending)
-
-
-def test_caller_regeneration_refuses_to_drop_custom_jobs(tmp_path: Path) -> None:
-    path = tmp_path / ".github/workflows/publish-update.yml"
-    path.parent.mkdir(parents=True)
-    before = caller.render("a" * 40) + "  custom:\n    runs-on: ubuntu-latest\n"
-    path.write_text(before, encoding="utf-8")
-    with pytest.raises(ValueError, match="custom publisher workflow"):
-        updater.update(
-            tmp_path,
-            ["tj-agents/github-actions"],
-            files=[".github/workflows/publish-update.yml"],
-            resolver=lambda _: "b" * 40,
-            comparer=lambda *_: None,
-            content_comparer=lambda *_: True,
-        )
-    assert path.read_text(encoding="utf-8") == before
-
-
-def test_unchanged_publisher_workflow_preserves_its_pin(tmp_path: Path) -> None:
-    path = tmp_path / ".github/workflows/publish-update.yml"
-    path.parent.mkdir(parents=True)
-    before = caller.render("a" * 40)
-    path.write_text(before, encoding="utf-8")
-    summary = updater.update(
-        tmp_path,
-        ["tj-agents/github-actions"],
-        files=[".github/workflows/publish-update.yml"],
-        resolver=lambda _: "b" * 40,
-        comparer=lambda *_: None,
-        content_comparer=lambda *_: False,
-    )
-    assert not summary["changed"]
-    assert path.read_text(encoding="utf-8") == before
-
-
-@pytest.mark.parametrize("custom", ["condition", "secret"])
-def test_caller_regeneration_preserves_custom_publication_controls(
-    tmp_path: Path, custom: str
-) -> None:
-    path = tmp_path / ".github/workflows/publish-update.yml"
-    path.parent.mkdir(parents=True)
-    before = caller.render("a" * 40)
-    if custom == "condition":
-        before = before.replace("  publish:\n", "  publish:\n    if: false\n")
-    else:
-        before = before.replace("secrets.UPDATE_TOPIC", "secrets.CUSTOM_TOPIC")
-    path.write_text(before, encoding="utf-8")
-    with pytest.raises(ValueError, match="custom publisher workflow"):
-        updater.update(
-            tmp_path,
-            ["tj-agents/github-actions"],
-            files=[".github/workflows/publish-update.yml"],
-            resolver=lambda _: "b" * 40,
-            comparer=lambda *_: None,
-            content_comparer=lambda *_: True,
-        )
-    assert path.read_text(encoding="utf-8") == before
