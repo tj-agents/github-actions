@@ -48,8 +48,8 @@ Hosted Mend Renovate produces dependency PRs under its own installed identity. I
 no-human-review path are explicit configuration in tj-agents/github's `github:configuration` workspace;
 they are not a ruleset bypass granted by this utility. Ordinary source and agent-authored PRs continue to
 use the policy above. The existing protected generated-publication App grant is also declared by that
-settings owner, separately from Renovate's check and no-human-review path. A publication hint, an App name,
-or a Renovate event grants no merge authority.
+settings owner, separately from Renovate's check and no-human-review path. An App name or a Renovate event
+grants no merge authority.
 
 ## Commands
 
