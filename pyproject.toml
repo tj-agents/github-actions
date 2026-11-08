@@ -14,11 +14,9 @@ package = false
 
 [tool.ruff]
 include = [
-  ".github/actions/publish-update/publish.py",
   ".github/actions/publish-generated/publish_generated.py",
   ".agents/tests/test_publish_update.py",
   ".agents/tests/test_publish_generated.py",
-  ".agents/github-actions/utility/publish-update/scripts/caller.py",
   ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
   ".agents/tests/test_owner_setup.py",
@@ -33,11 +31,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "P
 strict = true
 warn_unreachable = true
 files = [
-  ".github/actions/publish-update/publish.py",
   ".github/actions/publish-generated/publish_generated.py",
   ".agents/tests/test_publish_update.py",
   ".agents/tests/test_publish_generated.py",
-  ".agents/github-actions/utility/publish-update/scripts/caller.py",
   ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
   ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
   ".agents/tests/test_owner_setup.py",

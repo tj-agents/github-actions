@@ -1,6 +1,6 @@
 ---
 name: publish-update
-description: Publish a configured repository's verified default-branch update hint for an independently authorized consumer. Use when enrolling a repository or rendering its shared publisher workflow.
+description: Bootstrap an organization's protected regeneration App credentials, enroll eligible repositories' update-pins environments and opt repositories into hosted Renovate. Use when running owner setup or enrolling a repository.
 kind: utility
 domain: github-actions
 profile: core
@@ -11,41 +11,16 @@ provenance: house
 
 # Publish update
 
-Enroll publishers explicitly. Selecting the GitHub Actions package or scaffolding a service does not
-enroll a repository.
-
-This package owns the publisher action, canonical reusable publication workflow and protected credential
-enrollment. The uniform caller renders a thin trigger workflow with explicitly mapped secrets. `UPDATE_TOPIC`
-is private repository configuration: set the Actions variable and secret to the same value. The caller maps
-the secret to the canonical workflow, which reads it only as an action input, so public workflow source does
-not disclose it. Hints contain a repository and change categories, never file contents. Consumers
-authenticate and authorize their own actions after re-reading GitHub; publication grants no authority.
-
-On Windows use `python`; on Linux use `python3`. Render or install the publisher caller with the immutable
-publisher commit to use:
-
-```text
-python -B scripts/caller.py --revision <40-character-sha> --project <repository>
-```
-
-The rendered caller pins the publisher commit and labels that pin `# main`. It listens for a completed `ci`
-workflow run. The canonical workflow accepts only a successful `ci` run for a push on its own repository's
-default branch; pull requests, forks and unsuccessful runs publish nothing. Before publishing, it re-reads
-the current default-branch head and suppresses a run whose SHA is no longer current. The v1 hint includes
-that verified SHA as well as the repository and change categories.
-
-Observed sequence: source merge → regeneration commit → successful CI at the current default-branch head →
-notification. A failed or superseded CI run produces no notification. Do not add a direct post-push
-publisher call or a `published: 'true'` bypass; verified CI completion is the publication path.
-
-Possession of the ntfy topic is not authentication or consumer authority. The receiver decides whether to
-act, and this public workflow never merges code.
+Bootstrap the organization's regeneration App credentials and enroll eligible repositories explicitly.
+Selecting the GitHub Actions package or scaffolding a service does not enroll a repository. Enrolled
+repositories receive `UPDATE_APP_PRIVATE_KEY` in their default-branch-only `update-pins` environment, which
+Template's `plugin-ci.yml` regeneration job uses with the organization `UPDATE_APP_CLIENT_ID` variable.
 
 ## Hosted dependency updates
 
 Within the explicitly enrolled fleet, Mend Renovate is the single dependency-update producer. A repository
 opts in by adding `.github/renovate.json` that extends
-`github>tj-agents/github-actions:renovate-default`. Publisher enrollment does not configure or authorize
+`github>tj-agents/github-actions:renovate-default`. Credential enrollment does not configure or authorize
 Renovate; the hosted service must separately have access to the repository.
 
 The preset updates dependencies and pins GitHub Action digests; it does not grant merge authority. The
@@ -56,7 +31,7 @@ nor creates a merger, bypass, or service configuration.
 
 ## Owner setup and credential enrollment
 
-An organization owner bootstraps publication once. Preview from this skill directory is offline and does
+An organization owner bootstraps credentials once. Preview from this skill directory is offline and does
 not validate owner authorization:
 
 ```text
@@ -108,8 +83,8 @@ default-branch protections and both protected secret metadata records. It dispat
 to enroll and authenticate the stored credentials. It verifies the exact returned run and attempt against
 that branch's current head. Its `enroll` job, `Mint controller installation token` step and `Enroll eligible
 repositories` step must all succeed before setup completes. Aggregate workflow success alone is
-insufficient. Scheduled, push and manual runs perform enrollment only; they do not render callers or
-configure dependency updates.
+insufficient. Scheduled, push and manual runs perform enrollment only; they do not configure dependency
+updates.
 
 Before dispatch, setup checks existing App installations. Valid installations require no browser action. If
 an installation needs repository access or permission acceptance, setup opens its exact installation settings
@@ -135,7 +110,7 @@ exact result file, whose atomic JSON contains `schema_version: 1`, `owner`, `pid
 asking for console pastes. Reuse a running attempt and its result file; do not restart it to pick up newer
 scripts. Diagnose a failed attempt from its phase and error. A missing result or a `running` state leaves
 setup unverified. Only `complete` for the requested owner with `exit_code: 0` proves setup returned success;
-verified CI and publication remain rollout acceptance conditions.
+verified CI and regeneration remain rollout acceptance conditions.
 
 Legacy secret metadata indicates possible exposure; neither a secret name nor its location proves the
 issuing App's identity or that a key was copied. Setup verifies the existing credential App's organization
@@ -161,11 +136,11 @@ New key -> keep downloaded replacement PEM -> delete all older keys, keep replac
 Next local prompt: select that replacement PEM; no second key generation.
 ```
 
-The existing `<owner>-pin-updater` App is the protected credential source for publisher enrollment; its name
-does not enable a dependency updater. The separate `<owner>-enrollment-controller` has contents and secret
+The existing `<owner>-pin-updater` App is the protected regeneration credential source; its name does not
+enable a dependency updater. The separate `<owner>-enrollment-controller` has contents and secret
 metadata read, administration and environments write. The controller key stays in
 `<owner>/github-actions`' protected `update-enrollment` environment. The existing `update-pins` environment
-and `UPDATE_APP_*` names remain credential-storage identifiers for enrolled publishers, restricted to the
+and `UPDATE_APP_*` names remain credential-storage identifiers for enrolled repositories, restricted to the
 default branch; they do not activate an updater. When an existing credential App gains required read
 permissions, the owner accepts that installation update once; setup reuses the protected keys and
 installation, without key rotation or another onboarding flow.
@@ -188,10 +163,5 @@ secrets after replacements are read back. Key values never appear in diagnostics
 
 Trusted central automation uses `scripts/enrollment.py` only to enroll repositories. Its apply path requires
 the central repository's current default branch and a controller installation token; the protected credential
-App authenticates before upload, and consumer code is never executed. First token minting, post-merge
-publication and installed startup still require actual rollout verification; successful source checks do not
-establish them.
-
-For an existing fleet, `scripts/prepare_callers.py --inventory <json> --revision <sha> --output <directory>`
-prepares publisher callers without cloning repositories. Preparation writes caller files for review; it does
-not edit GitHub or activate a channel.
+App authenticates before upload, and consumer code is never executed. First token minting and post-merge
+regeneration still require actual rollout verification; successful source checks do not establish them.
