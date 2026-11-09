@@ -27,8 +27,8 @@ configuration. The generic scaffold generates CI and deployment files without a 
 Credential enrollment and personal ruleset application follow their linked utility scopes. For example,
 scaffolding a service produces no `.github/merge-policy.json`.
 
-Dependency updates are opt-in through the hosted Renovate preset: consumers add `.github/renovate.json`
-extending `github>tj-agents/github-actions:renovate-default` and Renovate opens the dependency pull requests.
+Dependency updates come from hosted Renovate through the organization configuration in
+[tj-agents/renovate-config](https://github.com/tj-agents/renovate-config), which every repository inherits.
 
 Store regeneration App credentials in the protected `update-pins` environment, restrict that environment to the
 default branch, set `UPDATE_APP_CLIENT_ID` as an Actions variable and `UPDATE_APP_PRIVATE_KEY` as an environment
