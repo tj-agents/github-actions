@@ -20,5 +20,6 @@
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": "Teach me the next GitHub Actions concept my current task needs."
-  }
+  },
+  "version": "13dd6ee4b4cb"
 }
