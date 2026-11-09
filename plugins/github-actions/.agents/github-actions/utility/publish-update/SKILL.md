@@ -18,10 +18,10 @@ Template's `plugin-ci.yml` regeneration job uses with the organization `UPDATE_A
 
 ## Hosted dependency updates
 
-Within the explicitly enrolled fleet, Mend Renovate is the single dependency-update producer. A repository
-opts in by adding `.github/renovate.json` that extends
-`github>tj-agents/github-actions:renovate-default`. Credential enrollment does not configure or authorize
-Renovate; the hosted service must separately have access to the repository.
+Within the explicitly enrolled fleet, Mend Renovate is the single dependency-update producer. Every repository it
+is installed on inherits the organization configuration in `tj-agents/renovate-config`; a repository's own
+`.github/renovate.json` only adds what is specific to it. Credential enrollment does not configure or
+authorize Renovate; the hosted service must separately have access to the repository.
 
 The preset updates dependencies and pins GitHub Action digests; it does not grant merge authority. The
 dependency check and any no-human-review path for Renovate-created pull requests are explicit ruleset and
