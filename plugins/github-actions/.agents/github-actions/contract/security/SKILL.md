@@ -17,6 +17,7 @@ Owns token permissions, action pinning, credentials, untrusted input and cloud s
 
 - Top-level `permissions: contents: read`. A job needing more re-declares its full list, `contents: read`
   included, because a job's block replaces the top-level one; an aggregator job sets `permissions: {}`.
+  Enforced by zizmor `excessive-permissions` for overbroad grants; review the exact permission list.
   Source: GitHub Actions documentation (secure-use reference); survey of production services and Tommy's
   repositories, 2026-10-12.
 - Every `uses:` of a remote action or reusable workflow is pinned to a full commit SHA with a trailing
@@ -25,18 +26,31 @@ Owns token permissions, action pinning, credentials, untrusted input and cloud s
   SHA" where the repository or organization allows it. Revisit GitHub's `actions.lock` lockfile when it
   leaves preview. Why: tag moves are the tj-actions and trivy-action attack class. Source: GitHub
   changelog 2025-08-15 (SHA-pinning policy); survey of production services and Tommy's repositories,
-  2026-10-12.
+  2026-10-12. Enforced by zizmor `unpinned-uses` for commit pins; review version comments and repository
+  policy.
 - `actions/checkout` always sets `persist-credentials: false`. Why: a stored token is readable by every
-  later step. Source: survey of production services and Tommy's repositories, 2026-10-12.
+  later step. Enforced by zizmor `artipacked`. Source: survey of production services and Tommy's
+  repositories, 2026-10-12.
 - Untrusted values (`github.event.*` text, `github.head_ref`, `inputs.*`) never appear as `${{ }}` inside
   `run:` or `script:`; pass them through `env:`. Source: GitHub Actions documentation (secure-use
-  reference).
+  reference). Enforced by zizmor `template-injection` with the pedantic persona.
 - No `pull_request_target` that checks out pull request code. Why: GitHub's guidance, and the 2026
-  trivy-action compromise. Source: GitHub Actions documentation (secure-use reference).
+  trivy-action compromise. Enforced by zizmor `dangerous-triggers`. Source: GitHub Actions documentation
+  (secure-use reference).
 - Secrets go in the `env:` of the step that uses them, never workflow-level `env:`. Identifiers that are
   not credentials (tenant, subscription and client IDs, storage account names) are `vars`, not `secrets`.
+  Enforced by Template `check_workflows.py` for workflow/job secret environment scope; review credential
+  classification.
   Source: survey of production services and Tommy's repositories, 2026-10-12.
 - Cloud sign-in on hosted runners is OIDC federation with no stored credential: `azure/login` with
   `client-id`, `tenant-id` and `subscription-id` from `vars`, and `id-token: write` only on the job that
   signs in. The `azure` package owns the identity and federated-credential subjects. Source: GitHub Actions
   documentation (OIDC in Azure).
+
+```yaml
+- name: Run authenticated check
+  env:
+    API_TOKEN: ${{ secrets.API_TOKEN }}
+    HEAD_REF: ${{ github.head_ref }}
+  run: ./check "$HEAD_REF"
+```

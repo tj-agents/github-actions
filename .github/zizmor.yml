@@ -1,0 +1,8 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        tj-agents/template/.github/workflows/plugin-ci.yml: ref-pin
+  github-app:
+    ignore:
+      - enroll-publishers.yml:39
