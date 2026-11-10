@@ -36,5 +36,6 @@ runs:
         PUBLISH_BRANCH: ${{ inputs.branch }}
         PUBLISH_REPOSITORY: ${{ inputs.repository || github.repository }}
       run: |
+        set -euo pipefail
         python=$(command -v python3 || command -v python)
         "$python" -B "$GITHUB_ACTION_PATH/publish_generated.py"
