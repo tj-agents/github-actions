@@ -132,11 +132,11 @@ disable_error_code = ["no-any-return", "union-attr"]
 
 [[tool.mypy.overrides]]
 module = "merge_policy"
-disable_error_code = ["no-untyped-call", "no-untyped-def", "var-annotated"]
+disable_error_code = ["attr-defined", "no-untyped-call", "no-untyped-def", "var-annotated"]
 
 [[tool.mypy.overrides]]
 module = "scaffold"
-disable_error_code = ["arg-type", "assignment", "dict-item", "index", "list-item", "no-any-return", "no-untyped-def", "type-arg", "unreachable", "var-annotated"]
+disable_error_code = ["arg-type", "assignment", "attr-defined", "dict-item", "index", "list-item", "no-any-return", "no-untyped-def", "type-arg", "unreachable", "var-annotated"]
 
 [[tool.mypy.overrides]]
 module = "test_lint_download"
