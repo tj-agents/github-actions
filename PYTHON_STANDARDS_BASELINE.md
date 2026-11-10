@@ -129,3 +129,12 @@ These exact entries cover unchanged legacy diagnostics exposed when the root Pyt
 | verify_workflows | no-untyped-call | 1 | Repair the existing no-untyped-call diagnostic and remove this exact override. |
 | verify_workflows | no-untyped-def | 1 | Repair the existing no-untyped-def diagnostic and remove this exact override. |
 | verify_workflows | union-attr | 2 | Repair the existing union-attr diagnostic and remove this exact override. |
+
+## Linux mypy
+
+Linux mypy evidence captured in standards-enforcement-github-actions-linux-mypy.txt and standards-enforcement-github-actions-linux-mypy-verbose.txt identified these unchanged platform-specific diagnostics. Repair each source diagnostic and remove attr-defined from its exact module override.
+
+| File | Module | Rule | Existing count | Required repair |
+| --- | --- | --- | ---: | --- |
+| .agents/github-actions/utility/merge-policy/scripts/merge_policy.py | merge_policy | attr-defined | 1 | Guard the Windows-only subprocess creation flag for Linux type checking. |
+| .agents/github-actions/utility/scaffold/scripts/scaffold.py | scaffold | attr-defined | 5 | Guard Windows ctypes attributes for Linux type checking. |
