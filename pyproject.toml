@@ -7,36 +7,28 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["mypy>=2.4.0", "pytest>=9.1.1", "ruff>=0.17.1"]
+dev = ["mypy>=2.4.1", "pytest>=9.1.1", "ruff>=0.17.4", "pytest-socket>=0.7.0"]
 
 [tool.uv]
 package = false
 
 [tool.ruff]
-include = [
-  ".github/actions/publish-generated/publish_generated.py",
-  ".agents/tests/test_publish_generated.py",
-  ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
-  ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
-  ".agents/tests/test_owner_setup.py",
-  ".agents/tests/test_enrollment.py",
-]
+extend-exclude = [".agents/sync_generated.py", ".agents/dependencies", ".codex/skills", ".claude/skills", ".codex/hooks/snapshot.py", ".codex/hooks/bootstrap.py", ".worktrees", ".template", "plugins"]
+include = ["*.py", "*.pyi"]
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "PIE", "RET", "RUF"]
+explicit-preview-rules = true
+preview = true
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "BLE", "C4", "SIM", "PTH", "PIE", "RET", "RUF", "PGH004", "ANN401", "G004", "PLW1514", "LOG002", "LOG015", "PLC2701", "ICN001", "TID251", "TRY300", "PT009", "PT011", "PT006", "PLR6301"]
 
 [tool.mypy]
+enable_error_code = ["ignore-without-code", "exhaustive-match"]
 strict = true
 warn_unreachable = true
-files = [
-  ".github/actions/publish-generated/publish_generated.py",
-  ".agents/tests/test_publish_generated.py",
-  ".agents/github-actions/utility/publish-update/scripts/owner_setup.py",
-  ".agents/github-actions/utility/publish-update/scripts/enrollment.py",
-  ".agents/tests/test_owner_setup.py",
-  ".agents/tests/test_enrollment.py",
-]
+exclude = ['(^|/)(?:\.agents/sync_generated\.py|\.agents/dependencies/|\.codex/skills/|\.claude/skills/|\.codex/hooks/(?:snapshot|bootstrap)\.py|\.worktrees/|\.template/)', '^plugins/']
+explicit_package_bases = true
+files = [".agents", ".github/actions"]
 
 [[tool.mypy.overrides]]
 module = ["test_merge_policy"]
@@ -46,5 +38,118 @@ follow_imports = "skip"
 strict = true
 testpaths = [".agents/tests"]
 pythonpath = [".agents/tests"]
-addopts = ["--import-mode=importlib", "-ra"]
+addopts = ["--import-mode=importlib", "-ra", "--disable-socket"]
 filterwarnings = ["error"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"unittest.TestCase" = { "msg" = "Use plain pytest functions and bare assertions." }
+"importlib.util.spec_from_file_location" = { "msg" = "Import the installed public API; do not load another checkout by path." }
+"sys.path" = { "msg" = "Install the declared dependency; do not modify the import search path." }
+
+[tool.ruff.lint.flake8-pytest-style]
+raises-require-match-for = ["*"]
+
+[tool.ruff.lint.per-file-ignores]
+".github/actions/publish-generated/publish_generated.py" = ["PTH201"]
+".agents/tests/test_publish_generated.py" = ["ANN401", "TID251"]
+".agents/tests/test_owner_setup.py" = ["ANN401", "PT006", "PT011", "TID251"]
+".agents/tests/test_enrollment.py" = ["ANN401", "PLR6301", "PT006", "TID251"]
+".agents/github-actions/utility/publish-update/scripts/owner_setup.py" = ["ANN401", "TID251"]
+".agents/github-actions/utility/publish-update/scripts/enrollment.py" = ["ANN401"]
+
+[[tool.python-standards.exceptions]]
+path = ".agents/github-actions/utility/merge-policy/scripts/merge_policy.py"
+rule = "PY001"
+reason = "Existing host integration traversal flattens nested records."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/github-actions/utility/publish-update/scripts/enrollment.py"
+rule = "PY016"
+reason = "Legacy host integration reads process state while resolving native configuration."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/github-actions/utility/publish-update/scripts/owner_setup.py"
+rule = "PY016"
+reason = "Legacy host integration reads process state while resolving native configuration."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/github-actions/utility/scaffold/scripts/scaffold.py"
+rule = "PY001"
+reason = "Existing host integration traversal flattens nested records."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/github-actions/utility/scaffold/templates/lint-workflows.py"
+rule = "PY016"
+reason = "Legacy host integration reads process state while resolving native configuration."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/tests/test_owner_setup.py"
+rule = "PY016"
+reason = "Existing test reads or replaces process state at a command boundary."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/tests/test_scaffold.py"
+rule = "PY001"
+reason = "Existing test flattens nested fixture data for assertions."
+
+[[tool.python-standards.exceptions]]
+path = ".agents/tests/test_scaffold.py"
+rule = "PY016"
+reason = "Existing test reads or replaces process state at a command boundary."
+
+[[tool.python-standards.exceptions]]
+path = ".github/actions/publish-generated/publish_generated.py"
+rule = "PY001"
+reason = "Existing host integration traversal flattens nested records."
+
+[[tool.python-standards.exceptions]]
+path = ".github/actions/publish-generated/publish_generated.py"
+rule = "PY016"
+reason = "Legacy host integration reads process state while resolving native configuration."
+
+[tool.ruff.lint.extend-per-file-ignores]
+".agents/github-actions/utility/merge-policy/scripts/merge_policy.py" = ["E501", "I001"]
+".agents/github-actions/utility/scaffold/scripts/scaffold.py" = ["BLE001", "E501", "I001", "PTH100", "RUF005", "TRY300"]
+".agents/github-actions/utility/scaffold/templates/lint-workflows.py" = ["E501", "I001"]
+".agents/tests/test_lint_download.py" = ["E501", "I001", "PT009", "SIM117", "TID251"]
+".agents/tests/test_merge_policy.py" = ["I001", "PLR6301", "PT009", "TID251"]
+".agents/tests/test_scaffold.py" = ["B023", "B905", "E501", "I001", "PLR6301", "PT009", "TID251"]
+".agents/tests/verify_workflows.py" = ["E501", "I001", "TID251"]
+
+[tool.ruff.format]
+exclude = [
+  ".agents/github-actions/utility/merge-policy/scripts/merge_policy.py",
+  ".agents/github-actions/utility/scaffold/scripts/scaffold.py",
+  ".agents/github-actions/utility/scaffold/templates/lint-workflows.py",
+  ".agents/tests/test_lint_download.py",
+  ".agents/tests/test_scaffold.py",
+  ".agents/tests/verify_workflows.py",
+]
+
+[[tool.mypy.overrides]]
+module = "lint-workflows"
+disable_error_code = ["no-any-return", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "merge_policy"
+disable_error_code = ["attr-defined", "no-untyped-call", "no-untyped-def", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "scaffold"
+disable_error_code = ["arg-type", "assignment", "attr-defined", "dict-item", "index", "list-item", "no-any-return", "no-untyped-def", "type-arg", "unreachable", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "test_lint_download"
+disable_error_code = ["arg-type", "no-untyped-def", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "test_merge_policy"
+disable_error_code = ["arg-type", "no-untyped-call", "no-untyped-def", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "test_scaffold"
+disable_error_code = ["arg-type", "assignment", "attr-defined", "dict-item", "index", "list-item", "no-untyped-call", "no-untyped-def", "union-attr", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = "verify_workflows"
+disable_error_code = ["arg-type", "no-untyped-call", "no-untyped-def", "union-attr"]
