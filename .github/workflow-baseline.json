@@ -1,0 +1,14 @@
+[
+  {
+    "path": ".github/workflows/ci.yml",
+    "rule": "naming",
+    "message": "job 'verify' name 'verify' must start with an uppercase letter",
+    "reason": "Preserves the check contexts required by the repository's existing ruleset."
+  },
+  {
+    "path": ".github/workflows/enroll-publishers.yml",
+    "rule": "naming",
+    "message": "job 'enroll' name 'enroll' must start with an uppercase letter",
+    "reason": "owner_setup.py verifies the exact GitHub job name enroll when authenticating the enrollment run."
+  }
+]

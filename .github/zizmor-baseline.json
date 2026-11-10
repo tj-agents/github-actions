@@ -1,0 +1,13 @@
+[
+  {
+    "rule": "unpinned-uses",
+    "path": "tj-agents/template/.github/workflows/plugin-ci.yml",
+    "reason": "Template's published consumer contract follows its main branch; check_workflows.py permits only main or a full commit SHA for this exact workflow."
+  },
+  {
+    "rule": "github-app",
+    "path": ".github/workflows/enroll-publishers.yml",
+    "line": 39,
+    "reason": "The protected default-branch enrollment controller must inspect and enroll eligible repositories across the organization's existing App installation. The update-enrollment environment and exact default-branch condition restrict this existing operation."
+  }
+]
