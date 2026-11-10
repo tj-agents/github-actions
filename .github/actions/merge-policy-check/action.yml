@@ -18,6 +18,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         POLICY: ${{ inputs.policy }}
       run: |
+        set -euo pipefail
         python=$(command -v python3 || command -v python)
         "$python" -B "$GITHUB_ACTION_PATH/../../../.agents/github-actions/utility/merge-policy/scripts/merge_policy.py" \
           check --repo "$GITHUB_REPOSITORY" --policy "$POLICY"
