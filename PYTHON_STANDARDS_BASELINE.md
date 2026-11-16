@@ -95,9 +95,6 @@ These exact entries cover unchanged legacy diagnostics exposed when the root Pyt
 | --- | --- | ---: | --- |
 | lint-workflows | no-any-return | 1 | Repair the existing no-any-return diagnostic and remove this exact override. |
 | lint-workflows | union-attr | 2 | Repair the existing union-attr diagnostic and remove this exact override. |
-| merge_policy | no-untyped-call | 11 | Repair the existing no-untyped-call diagnostic and remove this exact override. |
-| merge_policy | no-untyped-def | 9 | Repair the existing no-untyped-def diagnostic and remove this exact override. |
-| merge_policy | var-annotated | 1 | Repair the existing var-annotated diagnostic and remove this exact override. |
 | scaffold | arg-type | 2 | Repair the existing arg-type diagnostic and remove this exact override. |
 | scaffold | assignment | 4 | Repair the existing assignment diagnostic and remove this exact override. |
 | scaffold | dict-item | 3 | Repair the existing dict-item diagnostic and remove this exact override. |
