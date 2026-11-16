@@ -13,9 +13,10 @@ Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
 - Utility: [github-actions:scaffold](.agents/github-actions/utility/scaffold/SKILL.md), a Python 3.9+
   stdlib writer with a JSON CLI and pure complete-file-map API. Providers supply cloud steps and data;
   this package owns the workflow set, reusable graph, pins, composites, Dependabot and lint.
-- Utility: [github-actions:merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md) applies
-  Tommy's personal `.github/merge-policy.json` as the repository's GitHub ruleset; its composite action
-  `.github/actions/merge-policy-check` reports drift in CI.
+- Utility: [github-actions:merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md) renders
+  Tommy's personal `.github/merge-policy.json`, or its owner's `<owner>/.github` default, as the repository's
+  GitHub ruleset and its agent merge denials; its composite action `.github/actions/merge-policy-check`
+  reports drift in CI.
 
 - Utility: [github-actions:publish-update](.agents/github-actions/utility/publish-update/SKILL.md)
   bootstraps the organization's regeneration App credentials and enrolls eligible repositories.

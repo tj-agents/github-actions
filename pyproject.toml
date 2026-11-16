@@ -132,7 +132,7 @@ disable_error_code = ["no-any-return", "union-attr"]
 
 [[tool.mypy.overrides]]
 module = "merge_policy"
-disable_error_code = ["attr-defined", "no-untyped-call", "no-untyped-def", "var-annotated"]
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "scaffold"

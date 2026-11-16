@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Render Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing whether it requires approval before merge, or protecting its default branch.
+description: Render Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing who approves or merges its pull requests, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -16,27 +16,39 @@ repositories under `tj-agents`, `Concertable` or `tomjseery`. Employer repositor
 protections. Selecting GitHub Actions alone does not adopt this policy. Ruleset writes themselves are
 owned by tj-agents/github's `github:configuration` Terraform workspace, not this utility.
 
-A repository records whether a PR needs human approval before it can merge, not who is allowed to click
-merge, in `.github/merge-policy.json`:
+A repository records who gates and who merges its pull requests in `.github/merge-policy.json`. A
+repository without one takes its owner's default, `.github/merge-policy.json` in the `<owner>/.github`
+repository; a repository file replaces that default entirely. Every field below except `required_checks`
+is required, and any other field is rejected.
 
 ```json
 {
-  "requires_approval": true,
+  "approval": "human",
+  "merge": "agents",
+  "default_branch_push": "ci",
   "required_checks": ["ci-required"]
 }
 ```
 
-- `requires_approval: true`: every ordinary source or agent-authored PR needs one non-author approval before
-  it merges. That approval remains valid after later pushes to the same PR; required checks and source review
-  still apply to the current head. Agents push as the bot account, so the approver is Tommy. Once that approval
-  and the required checks are in place, merging the PR — by Tommy or by an agent — is not separately gated; the
-  ruleset only enforces that the approval and checks exist first.
-- `ci_pushes_default_branch: true`: deploy keys may push to the default branch, for a post-merge job
-  that commits generated files. GitHub rejects the GitHub Actions app as a repository ruleset bypass
-  actor, so that job pushes with a write deploy key whose private key is a secret of an environment
-  limited to the default branch; a workflow on any other branch cannot read it.
-- `requires_approval: false`: no approval; a PR merges once `required_checks` and the optional
-  `review_check` (an automated review job on the PR head) pass. A repository without the file has no gate.
+- `approval` — what a PR needs, besides `required_checks`, before it merges:
+  - `human`: one non-author approval. It remains valid after later pushes to the same PR; required checks
+    and source review still apply to the current head. Agents push as the bot account, so the approver is
+    Tommy.
+  - `automated`: no approval; the check named by `review_check` (an automated review job on the PR head)
+    must pass as well. `review_check` is required with `automated` and rejected otherwise.
+  - `none`: no approval; the PR merges once `required_checks` pass.
+- `merge` — who merges once those gates pass:
+  - `agents`: an agent or Tommy may merge; the ruleset only enforces that the gates are met first.
+  - `human`: only Tommy merges. Agents in that repository are denied `gh pr merge` (Claude `Bash` and
+    `PowerShell`, Codex prefix rules) and the GitHub MCP `merge_pull_request` tool through repository-scoped
+    permissions. Run `harness`, then regenerate the repository's host settings with Agent's
+    `agent:plugins` tooling, which commits the overlay into `.claude/settings.json` and the Codex rules.
+    GitHub has no rule that stops one push-capable account merging, so this is an agent denial, not a
+    ruleset rule.
+- `default_branch_push` — `ci` lets deploy keys push to the default branch, for a post-merge job that
+  commits generated files; `none` lets nobody push outside a PR. GitHub rejects the GitHub Actions app as a
+  repository ruleset bypass actor, so that job pushes with a write deploy key whose private key is a secret
+  of an environment limited to the default branch; a workflow on any other branch cannot read it.
 
 Every policy requires a PR and blocks deletion and force-push of the default branch. The repository admin
 role may bypass only through a PR; an organization owner does not hold that role, so in `tj-agents` a
@@ -53,20 +65,32 @@ grants no merge authority.
 
 ## Commands
 
-Run from this skill directory, with `python` on Windows and `python3` on Linux/macOS. The `gh` CLI must
-be signed in.
+Run from this skill directory, with `python` on Windows and `python3` on Linux/macOS (Python 3.12+). The
+`gh` CLI must be signed in whenever the owner default is read or GitHub is checked.
 
 ```text
-python -B scripts/merge_policy.py render --policy <repo>/.github/merge-policy.json
-python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.github/merge-policy.json
+python -B scripts/merge_policy.py render --policy <repo>/.github/merge-policy.json [--repo OWNER/NAME]
+python -B scripts/merge_policy.py harness --repo OWNER/NAME --policy <repo>/.github/merge-policy.json --harness <repo>/.agents/repository-harness.json
+python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.github/merge-policy.json --harness <repo>/.agents/repository-harness.json
 ```
 
-`render` prints the ruleset a policy implies, for review. Creating, updating and reconciling the ruleset
-itself is Terraform's job in tj-agents/github's `github:configuration`, not this script.
+Each command reads the repository file when it exists, otherwise the owner default from GitHub; `--repo`
+names the owner whose default applies. A missing or unreadable owner default is an error, never an empty
+policy.
 
-`check` compares the rules GitHub enforces on the default branch with the policy. Every check it requires
-must run on every PR, without path filters, or that PR can never merge. It exits 1 on drift and 2 on an
-invalid policy or failed API call. In CI, call the composite action pinned to a commit SHA:
+`render` prints the ruleset a policy implies, for review. Creating, updating and reconciling the ruleset
+itself is Terraform's job in tj-agents/github's `github:configuration`, which resolves the same owner
+default; this script never writes to GitHub.
+
+`harness` adds the `merge: human` denials to `.agents/repository-harness.json`, creating it when needed, or
+removes exactly those entries for `merge: agents`. The overlay's other entries are the repository's own and
+are left as they are.
+
+`check` compares the rules GitHub enforces on the default branch, and the harness overlay, with the policy.
+Every check it requires must run on every PR, without path filters, or that PR can never merge. It exits 1
+on drift and 2 on an invalid or missing policy or a failed API call. In CI, call the composite action pinned
+to a commit SHA; its token must be able to read the `<owner>/.github` repository when the owner default
+applies:
 
 ```yaml
 - uses: tj-agents/github-actions/.github/actions/merge-policy-check@<sha> # vX.Y.Z
