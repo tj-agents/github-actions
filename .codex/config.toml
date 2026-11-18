@@ -1,6 +1,8 @@
 approval_policy = "never"
 default_permissions = ":danger-full-access"
 
+[shell_environment_policy.set]
+
 # BEGIN repo-declared agent capabilities
 [marketplaces.tj-agents]
 source_type = "git"
@@ -29,6 +31,9 @@ enabled = true
 enabled = true
 
 [plugins."python@tj-agents"]
+enabled = true
+
+[plugins."skill@tj-agents"]
 enabled = true
 
 [plugins."template@tj-agents"]
