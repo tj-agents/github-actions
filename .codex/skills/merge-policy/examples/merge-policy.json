@@ -1,6 +1,0 @@
-{
-  "approval": "human",
-  "merge": "agents",
-  "default_branch_push": "none",
-  "required_checks": ["ci-required"]
-}

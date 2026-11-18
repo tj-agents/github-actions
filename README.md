@@ -14,9 +14,9 @@ Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
   stdlib writer with a JSON CLI and pure complete-file-map API. Providers supply cloud steps and data;
   this package owns the workflow set, reusable graph, pins, composites, Dependabot and lint.
 - Utility: [github-actions:merge-policy](.agents/github-actions/utility/merge-policy/SKILL.md) renders
-  Tommy's personal `.github/merge-policy.json`, or its owner's `<owner>/.github` default, as the repository's
-  GitHub ruleset and its agent merge denials; its composite action `.github/actions/merge-policy-check`
-  reports drift in CI.
+  Tommy's personal merge policy, the `merge` section of `.agents/repository.json` or its owner's
+  `<owner>/.github` default, as the repository's GitHub ruleset and its agent merge denials; its
+  composite action `.github/actions/merge-policy-check` reports drift in CI.
 
 - Utility: [github-actions:publish-update](.agents/github-actions/utility/publish-update/SKILL.md)
   bootstraps the organization's regeneration App credentials and enrolls eligible repositories.
@@ -26,7 +26,7 @@ Published as plugin `tj-agents/github-actions` from the `tj-agents` marketplace.
 Selecting this package makes its utilities available; it does not invoke them or adopt their personal
 configuration. The generic scaffold generates CI and deployment files without a merge-policy declaration.
 Credential enrollment and personal ruleset application follow their linked utility scopes. For example,
-scaffolding a service produces no `.github/merge-policy.json`.
+scaffolding a service produces no `.agents/repository.json`.
 
 Dependency updates come from hosted Renovate through the organization configuration in
 [tj-agents/renovate-config](https://github.com/tj-agents/renovate-config), which every repository inherits.

@@ -1,6 +1,6 @@
 ---
 name: merge-policy
-description: Render Tommy's personal repository merge policy from `.github/merge-policy.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing who approves or merges its pull requests, or protecting its default branch.
+description: Render Tommy's personal repository merge policy from the `merge` section of `.agents/repository.json` as its GitHub ruleset and report drift in CI. Use when creating a personal repository, changing who approves or merges its pull requests, or protecting its default branch.
 kind: utility
 domain: github-actions
 profile: scaffold
@@ -16,17 +16,22 @@ repositories under `tj-agents`, `Concertable` or `tomjseery`. Employer repositor
 protections. Selecting GitHub Actions alone does not adopt this policy. Ruleset writes themselves are
 owned by tj-agents/github's `github:configuration` Terraform workspace, not this utility.
 
-A repository records who gates and who merges its pull requests in `.github/merge-policy.json`. A
-repository without one takes its owner's default, `.github/merge-policy.json` in the `<owner>/.github`
-repository; a repository file replaces that default entirely. Every field below except `required_checks`
-is required, and any other field is rejected.
+A repository records who gates and who merges its pull requests in the `merge` section of its committed
+`.agents/repository.json`. A repository without that section takes its owner's default, the `merge`
+section of `.agents/repository.json` in the `<owner>/.github` repository; a repository's section replaces
+that default entirely. The file's `access` and `credentials` sections belong to tj-agents/github and do
+not affect the merge policy. The file is a JSON object with `schema_version` 1 and only those three
+sections. Every field below except `required_checks` is required, and any other field is rejected.
 
 ```json
 {
-  "approval": "human",
-  "merge": "agents",
-  "default_branch_push": "ci",
-  "required_checks": ["ci-required"]
+  "schema_version": 1,
+  "merge": {
+    "approval": "human",
+    "merge": "agents",
+    "default_branch_push": "ci",
+    "required_checks": ["ci-required"]
+  }
 }
 ```
 
@@ -69,14 +74,14 @@ Run from this skill directory, with `python` on Windows and `python3` on Linux/m
 `gh` CLI must be signed in whenever the owner default is read or GitHub is checked.
 
 ```text
-python -B scripts/merge_policy.py render --policy <repo>/.github/merge-policy.json [--repo OWNER/NAME]
-python -B scripts/merge_policy.py harness --repo OWNER/NAME --policy <repo>/.github/merge-policy.json --harness <repo>/.agents/repository-harness.json
-python -B scripts/merge_policy.py check --repo OWNER/NAME --policy <repo>/.github/merge-policy.json --harness <repo>/.agents/repository-harness.json
+python -B scripts/merge_policy.py render --configuration <repo>/.agents/repository.json [--repo OWNER/NAME]
+python -B scripts/merge_policy.py harness --repo OWNER/NAME --configuration <repo>/.agents/repository.json --harness <repo>/.agents/repository-harness.json
+python -B scripts/merge_policy.py check --repo OWNER/NAME --configuration <repo>/.agents/repository.json --harness <repo>/.agents/repository-harness.json
 ```
 
-Each command reads the repository file when it exists, otherwise the owner default from GitHub; `--repo`
-names the owner whose default applies. A missing or unreadable owner default is an error, never an empty
-policy.
+Each command reads the repository file's `merge` section when it has one, otherwise the owner default's
+from GitHub; `--repo` names the owner whose default applies. A missing or unreadable owner default, or one
+without a `merge` section, is an error, never an empty policy.
 
 `render` prints the ruleset a policy implies, for review. Creating, updating and reconciling the ruleset
 itself is Terraform's job in tj-agents/github's `github:configuration`, which resolves the same owner

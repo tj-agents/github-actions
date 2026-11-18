@@ -2,9 +2,9 @@ name: Merge policy check
 description: Fail when the default branch's enforced GitHub rules or the agent merge denials differ from the merge policy.
 
 inputs:
-  policy:
-    description: Path of the merge policy in the checked-out repository; when absent, the owner's <owner>/.github default applies.
-    default: .github/merge-policy.json
+  configuration:
+    description: Path of the repository configuration in the checked-out repository; without a merge section there, the owner's <owner>/.github default applies.
+    default: .agents/repository.json
   harness:
     description: Path of the repository harness overlay that carries the agent merge denials.
     default: .agents/repository-harness.json
@@ -19,10 +19,10 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
-        POLICY: ${{ inputs.policy }}
+        CONFIGURATION: ${{ inputs.configuration }}
         HARNESS: ${{ inputs.harness }}
       run: |
         set -euo pipefail
         python=$(command -v python3 || command -v python)
         "$python" -B "$GITHUB_ACTION_PATH/../../../.agents/github-actions/utility/merge-policy/scripts/merge_policy.py" \
-          check --repo "$GITHUB_REPOSITORY" --policy "$POLICY" --harness "$HARNESS"
+          check --repo "$GITHUB_REPOSITORY" --configuration "$CONFIGURATION" --harness "$HARNESS"
