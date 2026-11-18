@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render or check a repository's merge policy against GitHub (Python 3.12+, needs the gh CLI).
 
-The policy lives in the repository's `.github/merge-policy.json`; a repository without one takes its owner's
-default from the `<owner>/.github` repository's `.github/merge-policy.json`. `render` prints the ruleset
-GitHub should enforce, `harness` writes the agent denials a human-only merge implies into the repository's
-`.agents/repository-harness.json`, and `check` compares the rules GitHub enforces on the default branch, and
-that overlay, with the policy, so CI can report drift. Ruleset writes are owned by tj-agents/github's
-`github:configuration` Terraform workspace.
+The policy is the `merge` section of the repository's `.agents/repository.json`; a repository without one
+takes the `merge` section of the same file in its owner's `<owner>/.github` repository. `render` prints the
+ruleset GitHub should enforce, `harness` writes the agent denials a human-only merge implies into the
+repository's `.agents/repository-harness.json`, and `check` compares the rules GitHub enforces on the
+default branch, and that overlay, with the policy, so CI can report drift. Ruleset writes are owned by
+tj-agents/github's `github:configuration` Terraform workspace.
 """
 
 import argparse
@@ -21,7 +21,8 @@ import sys
 from typing import Any
 
 RULESET_NAME = "merge-policy"
-DEFAULT_POLICY = Path(".github/merge-policy.json")
+DEFAULT_CONFIGURATION = Path(".agents/repository.json")
+CONFIGURATION_SECTIONS = frozenset({"access", "merge", "credentials"})
 DEFAULT_HARNESS = Path(".agents/repository-harness.json")
 OWNER_REPOSITORY = ".github"
 GH_TIMEOUT_SECONDS = 60
@@ -125,30 +126,56 @@ def validate_policy(policy: object, where: object) -> Policy:
         raise PolicyError(f"{where}: {error}") from error
 
 
-def load_policy(path: Path) -> Policy:
+def merge_section(configuration: object, where: object) -> Policy | None:
+    """Return the policy a repository configuration's `merge` section declares, or None without one.
+
+    The configuration is a JSON object with `schema_version` 1 and only the `access`, `merge` and
+    `credentials` sections; the other sections belong to other readers.
+    """
+    if not isinstance(configuration, dict):
+        raise PolicyError(f"{where} must contain a JSON object")
+    version = configuration.get("schema_version")
+    if type(version) is not int or version != 1:
+        raise PolicyError(f"{where} needs schema_version 1")
+    unknown = set(configuration) - CONFIGURATION_SECTIONS - {"schema_version"}
+    if unknown:
+        raise PolicyError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
+    if "merge" not in configuration:
+        return None
+    return validate_policy(configuration["merge"], f"{where} merge")
+
+
+def repository_policy(path: Path) -> Policy | None:
+    """Return the policy the configuration at `path` declares, or None without a file or merge section."""
+    if not path.is_file():
+        return None
     try:
-        policy = json.loads(path.read_text(encoding="utf-8"))
+        configuration = json.loads(path.read_text(encoding="utf-8"))
     except OSError as error:
         raise PolicyError(f"cannot read {path}: {error}") from error
     except ValueError as error:
         raise PolicyError(f"{path} is not valid JSON: {error}") from error
-    return validate_policy(policy, path)
+    return merge_section(configuration, path)
 
 
 def effective_policy(path: Path, repository: str | None, run: Run = subprocess.run) -> Policy:
-    """Return the repository's own policy, or its owner's default when the repository declares none."""
-    if path.is_file():
-        return load_policy(path)
+    """Return the repository's own merge section, or its owner's default when the repository has none."""
+    policy = repository_policy(path)
+    if policy is not None:
+        return policy
     if repository is None:
-        raise PolicyError(f"{path} does not exist; pass --repo OWNER/NAME to use the owner's default")
+        raise PolicyError(f"{path} has no merge section; pass --repo OWNER/NAME to use the owner's default")
     owner = repository.split("/", 1)[0]
-    source = f"{owner}/{OWNER_REPOSITORY}:{DEFAULT_POLICY.as_posix()}"
-    endpoint = f"repos/{owner}/{OWNER_REPOSITORY}/contents/{DEFAULT_POLICY.as_posix()}"
+    source = f"{owner}/{OWNER_REPOSITORY}:{DEFAULT_CONFIGURATION.as_posix()}"
+    endpoint = f"repos/{owner}/{OWNER_REPOSITORY}/contents/{DEFAULT_CONFIGURATION.as_posix()}"
     try:
-        policy = gh(["-H", "Accept: application/vnd.github.raw+json", endpoint], run=run)
+        configuration = gh(["-H", "Accept: application/vnd.github.raw+json", endpoint], run=run)
     except PolicyMissingError as error:
-        raise PolicyError(f"no merge policy: {path} does not exist and {source} is absent or unreadable") from error
-    return validate_policy(policy, source)
+        raise PolicyError(f"no merge policy: {path} has none and {source} is absent or unreadable") from error
+    policy = merge_section(configuration, source)
+    if policy is None:
+        raise PolicyError(f"no merge policy: neither {path} nor {source} has a merge section")
+    return policy
 
 
 def required_contexts(policy: Policy) -> list[str]:
@@ -338,15 +365,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("render", "harness", "check"):
         command = commands.add_parser(name)
-        command.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
+        command.add_argument("--configuration", type=Path, default=DEFAULT_CONFIGURATION)
         command.add_argument("--repo", required=name != "render",
-                             help="OWNER/NAME, whose owner's default applies when the policy file is absent")
+                             help="OWNER/NAME, whose owner's default applies without a merge section")
         if name != "render":
             command.add_argument("--harness", type=Path, default=DEFAULT_HARNESS)
     commands.choices["check"].add_argument("--branch")
     arguments = parser.parse_args(argv)
     try:
-        policy = effective_policy(arguments.policy, arguments.repo)
+        policy = effective_policy(arguments.configuration, arguments.repo)
         if arguments.command == "render":
             print(json.dumps(ruleset(policy), indent=2))
         elif arguments.command == "harness":
