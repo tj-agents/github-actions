@@ -42,7 +42,7 @@ class RenderingTests(unittest.TestCase):
                     if not build:
                         config.pop("build")
                     files = scaffold.render(config)
-                    self.assertNotIn(".github/merge-policy.json", set(files))
+                    self.assertNotIn(".agents/repository.json", set(files))
 
     def test_provider_status_functions_are_preserved_behind_lifecycle_authorization(self):
         config = fixture()

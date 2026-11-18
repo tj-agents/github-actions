@@ -31,7 +31,7 @@ NONE = merge_policy.validate_policy({**HUMAN_DOCUMENT, "approval": "none"}, "non
 HUMAN_MERGE = merge_policy.validate_policy(
     {**HUMAN_DOCUMENT, "merge": "human"}, "merge"
 )
-OWNER_DEFAULT = "repos/tj-agents/.github/contents/.github/merge-policy.json"
+OWNER_DEFAULT = "repos/tj-agents/.github/contents/.agents/repository.json"
 MERGE_DENY = [
     "Bash(gh pr merge:*)",
     "PowerShell(gh pr merge:*)",
@@ -55,6 +55,13 @@ class FakeGh:
                 command, 1, "", "gh: Not Found (HTTP 404)"
             )
         return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
+
+
+def configuration(merge=None, **sections):
+    document = {"schema_version": 1, **sections}
+    if merge is not None:
+        document["merge"] = merge
+    return document
 
 
 def rules(policy):
@@ -85,7 +92,7 @@ class PolicyTests(unittest.TestCase):
     def write(self, value):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        path = Path(directory.name) / "merge-policy.json"
+        path = Path(directory.name) / "repository.json"
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
@@ -107,7 +114,32 @@ class PolicyTests(unittest.TestCase):
             {**HUMAN_DOCUMENT, "extra": 1},
         ):
             with self.subTest(value=value), self.assertRaises(merge_policy.PolicyError):
-                merge_policy.load_policy(self.write(value))
+                merge_policy.repository_policy(self.write(configuration(value)))
+
+    def test_invalid_configurations_are_refused(self):
+        values: tuple[object, ...] = (
+            [],
+            {"merge": HUMAN_DOCUMENT},
+            {"schema_version": 2, "merge": HUMAN_DOCUMENT},
+            {"schema_version": True, "merge": HUMAN_DOCUMENT},
+            configuration(HUMAN_DOCUMENT, method="app"),
+            {"schema_version": 1, "merge": None},
+        )
+        for value in values:
+            with self.subTest(value=value), self.assertRaises(merge_policy.PolicyError):
+                merge_policy.repository_policy(self.write(value))
+
+    def test_only_the_merge_section_is_read(self):
+        access = {"method": "app", "app": "tomjseery-bot"}
+        self.assertEqual(
+            HUMAN,
+            merge_policy.repository_policy(
+                self.write(configuration(HUMAN_DOCUMENT, access=access, credentials=[]))
+            ),
+        )
+        self.assertIsNone(
+            merge_policy.repository_policy(self.write(configuration(access=access)))
+        )
 
     def test_the_replaced_boolean_fields_are_rejected(self):
         for field in ("requires_approval", "ci_pushes_default_branch"):
@@ -117,7 +149,9 @@ class PolicyTests(unittest.TestCase):
                     merge_policy.PolicyError, f"unknown keys: {field}"
                 ),
             ):
-                merge_policy.load_policy(self.write({**HUMAN_DOCUMENT, field: True}))
+                merge_policy.repository_policy(
+                    self.write(configuration({**HUMAN_DOCUMENT, field: True}))
+                )
 
     def test_human_approval_retains_one_approval_across_pushes(self):
         ruleset = merge_policy.ruleset(HUMAN)
@@ -165,34 +199,58 @@ class OwnerDefaultTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.path = Path(directory.name) / "merge-policy.json"
+        self.path = Path(directory.name) / "repository.json"
 
-    def test_repository_file_overrides_the_owner_default_entirely(self):
-        self.path.write_text(json.dumps(AUTOMATED_DOCUMENT), encoding="utf-8")
-        gh = FakeGh({OWNER_DEFAULT: HUMAN_DOCUMENT})
+    def test_repository_merge_section_overrides_the_owner_default_entirely(self):
+        self.path.write_text(
+            json.dumps(configuration(AUTOMATED_DOCUMENT)), encoding="utf-8"
+        )
+        gh = FakeGh({OWNER_DEFAULT: configuration(HUMAN_DOCUMENT)})
         policy = merge_policy.effective_policy(self.path, "tj-agents/r", run=gh)
         self.assertEqual(AUTOMATED, policy)
         self.assertEqual([], gh.calls)
 
     def test_owner_default_applies_without_a_repository_file(self):
-        gh = FakeGh({OWNER_DEFAULT: HUMAN_DOCUMENT})
+        gh = FakeGh({OWNER_DEFAULT: configuration(HUMAN_DOCUMENT)})
         self.assertEqual(
             HUMAN, merge_policy.effective_policy(self.path, "tj-agents/r", run=gh)
         )
         self.assertIn("Accept: application/vnd.github.raw+json", gh.calls[0][0])
+
+    def test_owner_default_applies_without_a_repository_merge_section(self):
+        access = {"method": "human"}
+        self.path.write_text(json.dumps(configuration(access=access)), encoding="utf-8")
+        gh = FakeGh({OWNER_DEFAULT: configuration(HUMAN_DOCUMENT)})
+        self.assertEqual(
+            HUMAN, merge_policy.effective_policy(self.path, "tj-agents/r", run=gh)
+        )
 
     def test_no_policy_anywhere_is_an_error(self):
         with self.assertRaisesRegex(merge_policy.PolicyError, "no merge policy"):
             merge_policy.effective_policy(
                 self.path, "tj-agents/r", run=FakeGh({OWNER_DEFAULT: 404})
             )
+        access = {"method": "app", "app": "tomjseery-bot"}
+        with self.assertRaisesRegex(merge_policy.PolicyError, "no merge policy"):
+            merge_policy.effective_policy(
+                self.path,
+                "tj-agents/r",
+                run=FakeGh({OWNER_DEFAULT: configuration(access=access)}),
+            )
         with self.assertRaisesRegex(merge_policy.PolicyError, "--repo"):
             merge_policy.effective_policy(self.path, None, run=FakeGh({}))
 
     def test_an_invalid_owner_default_names_its_source(self):
-        gh = FakeGh({OWNER_DEFAULT: {"requires_approval": True}})
-        with self.assertRaisesRegex(merge_policy.PolicyError, "tj-agents/.github"):
-            merge_policy.effective_policy(self.path, "tj-agents/r", run=gh)
+        for document in (
+            configuration({"requires_approval": True}),
+            HUMAN_DOCUMENT,
+        ):
+            gh = FakeGh({OWNER_DEFAULT: document})
+            with (
+                self.subTest(document=document),
+                self.assertRaisesRegex(merge_policy.PolicyError, "tj-agents/.github"),
+            ):
+                merge_policy.effective_policy(self.path, "tj-agents/r", run=gh)
 
 
 class HarnessTests(unittest.TestCase):
@@ -334,10 +392,19 @@ class CheckTests(unittest.TestCase):
 
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
-            policy = Path(directory) / "merge-policy.json"
-            policy.write_text(json.dumps(HUMAN_DOCUMENT), encoding="utf-8")
+            policy = Path(directory) / "repository.json"
+            policy.write_text(
+                json.dumps(configuration(HUMAN_DOCUMENT)), encoding="utf-8"
+            )
             render = subprocess.run(
-                [sys.executable, "-B", str(SCRIPT), "render", "--policy", str(policy)],
+                [
+                    sys.executable,
+                    "-B",
+                    str(SCRIPT),
+                    "render",
+                    "--configuration",
+                    str(policy),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -346,7 +413,8 @@ class CheckTests(unittest.TestCase):
             self.assertEqual("merge-policy", json.loads(render.stdout)["name"])
             harness = Path(directory) / "repository-harness.json"
             policy.write_text(
-                json.dumps({**HUMAN_DOCUMENT, "merge": "human"}), encoding="utf-8"
+                json.dumps(configuration({**HUMAN_DOCUMENT, "merge": "human"})),
+                encoding="utf-8",
             )
             write = subprocess.run(
                 [
@@ -356,7 +424,7 @@ class CheckTests(unittest.TestCase):
                     "harness",
                     "--repo",
                     "tj-agents/r",
-                    "--policy",
+                    "--configuration",
                     str(policy),
                     "--harness",
                     str(harness),
@@ -369,9 +437,16 @@ class CheckTests(unittest.TestCase):
             self.assertIn(
                 "mcp__github__merge_pull_request", harness.read_text(encoding="utf-8")
             )
-            policy.write_text("{}", encoding="utf-8")
+            policy.write_text('{"schema_version": 1, "merge": {}}', encoding="utf-8")
             invalid = subprocess.run(
-                [sys.executable, "-B", str(SCRIPT), "render", "--policy", str(policy)],
+                [
+                    sys.executable,
+                    "-B",
+                    str(SCRIPT),
+                    "render",
+                    "--configuration",
+                    str(policy),
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
