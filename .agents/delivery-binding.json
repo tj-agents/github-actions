@@ -1,0 +1,32 @@
+{
+  "authorization_resolution": {
+    "standing": "auto",
+    "stopped_by": {
+      "class": "ci-workflow",
+      "path": ".github/workflows/merge-updater-prs.yml"
+    }
+  },
+  "auto_merge": false,
+  "bound_at": "2026-11-08T02:15:52.974350+00:00",
+  "branch": "Feature/RenovateRetirement",
+  "changed_path_count": 25,
+  "completion_condition": "the bound PR reaches MERGED, or a recorded terminal ends this delivery",
+  "head": "ff8c72964840b03fd7c0e110520cc82b1d0254b9",
+  "merge_authorization": {
+    "instruction": null,
+    "mode": "absent"
+  },
+  "pending_evidence": [],
+  "pr": 64,
+  "pr_url": "https://github.com/tj-agents/github-actions/pull/64",
+  "repo": "tj-agents/github-actions",
+  "review": {
+    "reviewed_sha": "ff8c72964840b03fd7c0e110520cc82b1d0254b9",
+    "work_order": "C:\\Users\\TommySeery\\source\\repos\\tj-agents\\github-actions\\.git\\agent-workflow\\reviews\\07652ca66a8152a1b13a90080bd76c0b23fa6bc775c5b39bd14c8406e6820077\\work-order.md",
+    "work_order_order": [
+      "full"
+    ]
+  },
+  "schema_version": 1,
+  "worktree": "C:\\Users\\TommySeery\\source\\repos\\tj-agents\\github-actions\\.worktrees\\Feature-RenovateRetirement"
+}
