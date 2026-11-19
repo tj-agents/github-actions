@@ -69,7 +69,7 @@ generic workflow files or own a second action-pin catalog.
 
 ## Current execution - 2026-10-13
 
-Feature/WorkflowWriter starts at 706a817563f1cb27b5b6db90375a5388b482cfd0 in an isolated checkout.
+Feature/WorkflowWriter starts at a1509a4271dd2759356eed93b38b3c37e78933b6 in an isolated checkout.
 The existing Template-workflow checkout belongs to another owner and will not be edited.
 Implementation is L4: the boundary is decided and neutral-provider tests, actionlint and zizmor can verify it.
 Tommy authorized available models for implementation and independent review; no additional native sessions.
@@ -136,14 +136,14 @@ Parent-only commit/push is clerical L7. Available-model routing is authorized by
 will be added beyond the session limit.
 
 Tommy separately approved publishing the scoped M001 operator record directly to main at
-7812f8a25f139c230f847b77091fd87fc39ed0f2. Final review synchronizes once with that record-only base movement.
+7c105f1a6add446b5b3c8d8b2601ddefc14d569c. Final review synchronizes once with that record-only base movement.
 Azure composition remains the next separate delivery slice; no Azure renderer code is changed here.
 
 ### Completed independent review and repair owner - 2026-10-13
 
-Source checkpoint 29c7687ac9984cf725dabf246c0cd3960c8ee9dc passed the staged deny-list. The single
+Source checkpoint 6cd5f47d60cf3faf71f1216af895f51e9f513ef7 passed the staged deny-list. The single
 pre-review synchronization with the approved record-only main movement froze head
-8cf9a69f297e07d78358e7a418c43c322cb31e1d against 7812f8a25f139c230f847b77091fd87fc39ed0f2.
+874914c033d280c8bd6b0dc2051ce7dac8f19b30 against 7c105f1a6add446b5b3c8d8b2601ddefc14d569c.
 The independent native-general, API-contract and security evidence plus parent workflow review completed
 with seven findings, deduplicated in reviews/Feature-WorkflowWriter.md. Both source-host coverage checks
 passed. No candidate push or PR yet. Address-review is active with a sole L4 source writer, starting with
@@ -153,8 +153,8 @@ review and two-OS exact-head CI before merge. The existing owning-account Node r
 the release-helper regression tests locally; no runtime installation or live cloud commands occurred.
 ### Review repair checkpoints - 2026-10-13
 
-WW-1/2 composition repairs are committed at 18e0a3bfb330f728413d51847f0eb1bcc96e8567; WW-3/4
-expression guards and lint-before-plan at 37043119b1c2b2134d7ba8a18d2d9089616d46d7. Both staged
+WW-1/2 composition repairs are committed at ac8ec84ea6ee470f9117b5481016ef6569489a1b; WW-3/4
+expression guards and lint-before-plan at 2151b7b7804588363cd1c039cc0a979b451f8c58. Both staged
 private deny-list checks passed. All 43 focused tests pass with required Node/no skips, AST test-name
 uniqueness and 69-file freshness. No writer push or PR yet. The immutable full-review judgment remains
 changes-requested until fresh incremental synthesis after all seven dispositions.
@@ -166,7 +166,7 @@ successful prerequisite checkpoint while preserving provider status-function sem
 concrete implementation behavior in scaffold ABI docs. WW-6 moved-tag trigger assertion follows.
 
 The M002 source-insertion incident is retained in the primary shared register and delivered separately
-as docs PR 2, merged e6a0dd160b57f0be68bba7386e13d2366e0dff8f. Independent full/delta review and
+as docs PR 2, merged af62c834f677969afe5c20b8b183568de8455018. Independent full/delta review and
 exact-head CI 38462956959 passed; primary base clean. This record-only base movement is reconciled at
 writer preflight without another source synchronization or changing the frozen review identity.
 
@@ -188,7 +188,7 @@ complete executable/security boundary; those guards cannot be split into an inde
 Azure composition/removal, dotnet boilerplate and later repairs remain separate slices. Fresh incremental
 review selects L4 correctness/API and L2 security; parent delivery is clerical L7. Source writer stopped.
 
-Fresh review froze 8cf9a69f297e07d78358e7a418c43c322cb31e1d..c2712ec4c5f0805a11e0fd02df76cbed175291f9
+Fresh review froze 874914c033d280c8bd6b0dc2051ce7dac8f19b30..ab2ecd9596ff3e364cce13e1dbf4cdbffd236fb7
 (20 changed paths). API-contract and parent native fallback confirm one bare-step-condition context
 validation defect; the full-trunk security lens remains active at the same head. Canonical work order
 is in-progress/pending and preserves the previous watermark. No source remediation or PR publication
@@ -275,7 +275,7 @@ exact-head CI on existing draft PR3, then authorized merge and Azure adapter sli
 
 ### Public writer transaction repair - 2026-10-14
 
-Shared workflow writer PR3 merged a2e04b07 from approved230fee5 with all5 checks green; all17 findings terminal. Source-owner B001 record-only PR4 merged d93b6ce47ae5dd585e84dc44f986497e9bba58f0 from e814659 after independent docs review and exact-head CI. Primary shared BUGS.md is retained/published. Temporary-only reproduction proves ordinary replacement deletion and cleanup-error masking in public write_files. Azure B003 separately merged f05693ec from reviewed9e90c28 after full Linux/Windows/host CI; its combined write transaction is independent.
+Shared workflow writer PR3 merged a2e04b07 from approved230fee5 with all5 checks green; all17 findings terminal. Source-owner B001 record-only PR4 merged 75c7e8829ff3996062fb368abb30543b7b03bc6b from e814659 after independent docs review and exact-head CI. Primary shared BUGS.md is retained/published. Temporary-only reproduction proves ordinary replacement deletion and cleanup-error masking in public write_files. Azure B003 separately merged f05693ec from reviewed9e90c28 after full Linux/Windows/host CI; its combined write transaction is independent.
 
 Current bounded branch Fix/WriterFileTransaction starts from fetched d93b6ce, isolated at .worktrees/Fix-WriterFileTransaction. Parent causal diagnosis: pathname-only rollback treats a replaced file as owned and uncaught cleanup errors mask WriteError. Repair live file/directory references, identity/type/redirect validation, all stream-close failure handling, retained-path reporting and contained cleanup; release all acquired resources without rollback after final success-release failure. Use duplicate file descriptors, POSIX directory descriptors and Windows directory handles without delete sharing. The directory-acquisition and final namespace-removal windows remain explicitly non-atomic. No new workflow/provider/config/options behavior, pin catalog or action resources in this repair. Azure composition,0b and later items remain separate.
 
