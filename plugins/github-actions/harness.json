@@ -11,15 +11,15 @@
         "repository": "tj-agents/marketplace"
       }
     ],
-    "plugins": [
-      "tj-agents/github-actions",
-      "tj-agents/base",
-      "tj-agents/engineering"
-    ],
     "hooks": [],
     "permissions": {
       "claude_allow": [],
       "codex_prefix_rules": []
-    }
+    },
+    "plugins": [
+      "tj-agents/github-actions",
+      "tj-agents/base",
+      "tj-agents/engineering"
+    ]
   }
 }

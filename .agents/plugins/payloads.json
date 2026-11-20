@@ -3,5 +3,8 @@
     "github-actions": [
       "github-actions"
     ]
+  },
+  "dependencies": {
+    "github-actions": ["tj-agents/base"]
   }
 }

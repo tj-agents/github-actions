@@ -38,32 +38,15 @@ not validate owner authorization:
 python -B scripts/owner_setup.py --owner tj-agents
 ```
 
-For a new Windows attempt, use `cli:clip`'s existing `user_command.py` mechanism to prepare the owner's
-native `!` Bash command. Resolve the skill directory, a new local result file and the command specification
-to absolute paths. Write a specification like:
+For a new Windows attempt, resolve the skill directory and a fresh local result path. Put the exact
+invocation in a UTF-8 command file and use `cli:clip` to copy it for the owner. This command runs in
+the owner's own PowerShell terminal. Keep the terminal's identity and credential checks intact.
 
-```json
-{
-  "shell": "bash",
-  "unset": ["TJ_AGENT", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR", "GH_PROMPT_DISABLED"],
-  "steps": [{
-    "argv": [
-      "powershell.exe", "-NoProfile", "-File",
-      "<absolute-skill-directory>/scripts/owner_setup.ps1",
-      "-Owner", "tj-agents", "-ResultFile", "<absolute-local-result-file>"
-    ]
-  }]
-}
+```powershell
+& '<absolute-skill-directory>/scripts/owner_setup.ps1' -Owner tj-agents -ResultFile '<absolute-local-result-file>'
 ```
 
-Issue it through the installed CLI helper at `~/.agents-state/bin/cli/user_command.py`:
-
-```text
-python -B "<installed-cli-directory>/user_command.py" issue --spec "<absolute-command-specification>"
-```
-
-Relay the helper's exact native command; it constructs the command, copies it as plain text and verifies
-the clipboard. The owner executes it. The agent does not execute the owner command. The launcher opens an
+The owner executes the copied command. The launcher opens an
 interactive owner PowerShell window and invokes the locked Python setup. On Linux or macOS, the owner runs
 the locked setup directly in their terminal:
 
@@ -102,7 +85,7 @@ matching run 123/current head/attempt + successful enroll job and both required 
 wrong identity, failed/skipped evidence or timeout -> failed with run URL, no new key request
 ```
 
-The native `!` command returning zero proves only that the Windows launcher returned successfully. Read the
+The Windows launcher returning zero proves only that it started or resumed the interactive setup. Read the
 exact result file, whose atomic JSON contains `schema_version: 1`, `owner`, `pid`, `state`, `phase`,
 `exit_code`, `observed_at` and optional `error` and `action` fields. An action contains `kind`, `summary`,
 `locations`, `steps` and `url`; its kind is `identify_legacy_app`, `rotate_updater_keys` or
