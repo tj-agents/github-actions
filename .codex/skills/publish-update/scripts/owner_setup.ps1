@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($env:TJ_AGENT -eq '1' -or $env:GH_TOKEN -or $env:GITHUB_TOKEN -or $env:GH_CONFIG_DIR) {
-    throw "Owner setup requires your own GitHub sign-in. Invoke this launcher through the prepared native ! command."
+    throw "Owner setup requires your own GitHub sign-in. Use the prepared command in your own PowerShell terminal."
 }
 if ($env:OS -ne 'Windows_NT') {
     throw 'Use the locked owner_setup.py command in your own terminal on this platform.'
